@@ -110,7 +110,7 @@ def cnf():
     max_seq_length=128
     train_batch_size=32
     learning_rate=5e-5
-    num_train_epochs=1
+    num_train_epochs=20
     seed=None
     output_dir = None
     server_ip = None
@@ -136,6 +136,12 @@ def cnf():
     loss_function="ll1"
     save_model=True
     save_mode='best'
+    
+    d_acoustic_in=0
+    d_visual_in = 0
+    h_audio_lstm = 0
+    h_video_lstm = 0
+    h_merge_sent = 0
     
 
 def multi_collate(batch):
@@ -389,6 +395,7 @@ def prep_for_training(num_train_optimization_steps,_config):
 
 @bert_ex.capture
 def train_epoch(model,train_dataloader,optimizer,_config):
+        model.train()
         tr_loss = 0
         nb_tr_examples, nb_tr_steps = 0, 0
         for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
@@ -598,8 +605,8 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
                 if valid_loss <= min(valid_losses):
                     torch.save(checkpoint, model_path)
                     print('    - [Info] The checkpoint file has been updated.')
-            test_accuracy = test_score_model(model,test_data_loader)
-            _run.log_scalar("test_per_epoch.acc", test_accuracy, epoch_i)
+                    test_accuracy = test_score_model(model,test_data_loader)
+                    _run.log_scalar("test_per_epoch.acc", test_accuracy, epoch_i)
     #After the entire training is over, save the best model as artifact in the mongodb
     
     
@@ -623,4 +630,4 @@ def main(_config):
     # #I believe that it will try to minimize the rest. Let's see how it plays out
     # results["optimization_target"] = 1 - test_accuracy
 
-    return results
+    #return results

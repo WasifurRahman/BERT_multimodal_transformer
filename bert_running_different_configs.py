@@ -88,7 +88,8 @@ def initiate_main_experiment(_config):
 
     
     #print("inherited this configs:",main_init_configs,main_init_configs.keys())
-    #result = bert_ex.run(command_name="main",config_updates=main_init_configs)
+    result = bert_ex.run(command_name="main",config_updates=main_init_configs)
+    return
     if dataset_name=="mosi":
         result = bert_multi_ex.run(command_name="main",config_updates=main_init_configs)
     elif dataset_name=="ETS": 
