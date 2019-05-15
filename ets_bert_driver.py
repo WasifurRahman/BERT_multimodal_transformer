@@ -35,7 +35,9 @@ from sklearn.metrics import accuracy_score, f1_score
 
 import torch
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
-                              TensorDataset)
+                              TensorDataset,Dataset)
+#from torch.utils.data import DataLoader, Dataset
+
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
@@ -44,7 +46,7 @@ from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef
 
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE, WEIGHTS_NAME, CONFIG_NAME
-from pytorch_pretrained_bert.modeling import BertForSequenceClassification, BertConfig,MultimodalBertForSequenceClassification
+from pytorch_pretrained_bert.modeling import BertForSequenceClassification, BertConfig,MultimodalBertForSequenceClassification,ETSBertForSequenceClassification
 #from pytorch_pretrained_bert.tokenization import BertTokenizer
 #We are using the tokenization that amir did
 from pytorch_pretrained_bert.amir_tokenization import BertTokenizer
@@ -54,12 +56,12 @@ from pytorch_pretrained_bert.optimization import BertAdam, WarmupLinearSchedule
 logger = logging.getLogger(__name__)
 from sacred import Experiment
 
-bert_multi_ex = Experiment('bert_multimodal_transformer')
+ets_bert_ex = Experiment('bert_etsr')
 from sacred.observers import MongoObserver
 from global_configs import *
 url_database = conf_url_database
 mongo_database_name = conf_mongo_database_name
-bert_multi_ex.observers.append(MongoObserver.create(url= url_database ,db_name= mongo_database_name))
+ets_bert_ex.observers.append(MongoObserver.create(url= url_database ,db_name= mongo_database_name))
 
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
@@ -81,10 +83,172 @@ class InputExample(object):
         self.text_b = text_b
         self.label = label
     def __str__(self):
-        print("guid:{0},text_a:{1},text_b:{2},label:{3}".format(self.guid,self.text_a,self.text_b,self.label))
+        return "guid:{0},text_a:{1},text_b:{2},label:{3}".format(self.guid,self.text_a,self.text_b,self.label)
 
 
+class ETSDataset(Dataset):
+    
+    def __init__(self,id_list,_config,all_data,tokenizer):
+        self.id_list = id_list
+        self.config=_config
+        self.tokenizer = tokenizer
+        data_path = _config["dataset_location"]
+            
+        (self.word_aligned_facet_sdk,self.word_aligned_covarep_sdk,self.word_embedding_idx_sdk,self.y_labels,self.id_2_word) = all_data
 
+        
+        self.glove_d = 1
+        self.covarep_d=81
+        self.facet_d=35
+        self.tot_feat_d = self.glove_d+self.covarep_d+self.facet_d
+
+        self.max_video_len=_config["max_num_sentences"]
+        self.max_sen_len=_config["max_seq_length"]
+    
+    def paded_word_idx(self,seq,max_sen_len=20,left_pad=1):
+        seq=seq[0:max_sen_len]
+        pad_w=np.concatenate((np.zeros(max_sen_len-len(seq)),seq),axis=0)
+        pad_w=np.array([[w_id] for  w_id in pad_w])
+        return pad_w
+
+    def padded_covarep_features(self,seq,max_sen_len=20,left_pad=1):
+        seq=seq[0:max_sen_len]
+        return np.concatenate((np.zeros((max_sen_len-len(seq),self.covarep_d)),seq),axis=0)
+
+    def padded_facet_features(self,seq,max_sen_len=20,left_pad=1):
+        seq=seq[0:max_sen_len]
+        
+        #print("padded facet:",np.zeros(((max_sen_len-len(seq)),self.facet_d)).shape,np.array(seq).shape)
+        padding = np.zeros(((max_sen_len-len(seq)),self.facet_d))
+        #seq = np.array(seq)
+        #print("right before concat:",padding.shape,seq.shape)
+        
+        ret_val =  np.concatenate((padding,seq),axis=0)
+        #print("done:",ret_val.shape)
+        return ret_val
+
+    def padded_context_features(self,context_w,context_of,context_cvp,max_num_sentence,max_sen_len):
+        context_w=context_w[-max_num_sentence:]
+        context_of=context_of[-max_num_sentence:]
+        context_cvp=context_cvp[-max_num_sentence:]
+
+        padded_context=[]
+        for i in range(len(context_w)):
+            p_seq_w=self.paded_word_idx(context_w[i],max_sen_len)
+            p_seq_cvp=self.padded_covarep_features(context_cvp[i],max_sen_len)
+            #print("NOw processing:",np.array(context_of[i]).shape)
+            p_seq_of=self.padded_facet_features(context_of[i],max_sen_len)
+            #print("processed it")
+            padded_context.append(np.concatenate((p_seq_w,p_seq_cvp,p_seq_of),axis=1))
+            #print("and it")
+
+        pad_c_len=max_num_sentence-len(padded_context)
+        padded_context=np.array(padded_context)
+        
+        if not padded_context.any():
+            return np.zeros((max_num_sentence,max_sen_len,self.tot_feat_d))
+        #print("padded",padded_context.shape)
+        return np.concatenate((np.zeros((pad_c_len,max_sen_len,self.tot_feat_d)),padded_context),axis=0)
+    
+        
+    
+    def __len__(self):
+        return len(self.id_list)
+    
+    def process_a_video(self):
+        print("ok")
+        
+    def __getitem__(self,index):
+        
+            hid=self.id_list[index]
+            #print("The key is:",hid)
+            text=np.array(self.word_embedding_idx_sdk[hid]['features'])
+            visual=np.array(self.word_aligned_facet_sdk[hid]['features'])
+            acoustic=np.array(self.word_aligned_covarep_sdk[hid]['features'])
+            #print("checking 0 index:{0} and text len{1}:".format(self.id_2_word[0],text.shape))
+            #max_num_sentence
+            #if(text.shape[0] <)
+            label=torch.FloatTensor([self.y_labels["labels"][hid][self.config["target_label_index"]]])
+            data = (text,visual,acoustic,label,hid,self.id_2_word)
+            features,video_len = convert_examples_to_features(data, self.config["label_list"],self.config["max_seq_length"], self.tokenizer, self.config["output_mode"])
+            #print(features)
+            
+            #(words, visual, acoustic), label, segment
+            
+            all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
+            all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
+            all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
+            all_visual = torch.tensor([f.visual for f in features], dtype=torch.float)
+            all_acoustic = torch.tensor([f.acoustic for f in features], dtype=torch.float)
+    
+    #print("bert_ids:",all_input_ids)
+
+            if self.config["output_mode"] == "classification":
+                all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
+            elif self.config["output_mode"] == "regression":
+                all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.float)
+        
+            # dataset = TensorDataset(all_input_ids, all_visual,all_acoustic,all_input_mask, all_segment_ids, all_label_ids)
+            #print("all_input_ids:{0}, all_visual:{1},all_acoustic:{2},all_input_mask:{3}, all_segment_ids:{4}, all_label_ids:{5},video_len:{6}".format(all_input_ids.shape, all_visual.shape,all_acoustic.shape,all_input_mask.shape, all_segment_ids.shape, all_label_ids.shape,np.array([video_len]).shape))
+            n_padding_rows = [self.config["max_num_sentences"] - all_input_ids.size()[0]]
+            
+            all_input_ids = torch.cat((all_input_ids, torch.zeros(n_padding_rows + list(all_input_ids.size()[1:]),dtype=all_input_ids.dtype)))
+            all_visual = torch.cat((all_visual, torch.zeros(n_padding_rows + list(all_visual.size()[1:]),dtype=all_visual.dtype)))
+            all_acoustic = torch.cat((all_acoustic, torch.zeros(n_padding_rows + list(all_acoustic.size()[1:]),dtype=all_acoustic.dtype)))
+            all_input_mask = torch.cat((all_input_mask, torch.zeros(n_padding_rows + list(all_input_mask.size()[1:]),dtype=all_input_mask.dtype)))
+            all_segment_ids = torch.cat((all_segment_ids, torch.zeros(n_padding_rows + list(all_segment_ids.size()[1:]),dtype=all_segment_ids.dtype)))
+            #not sending it
+            all_label_ids = torch.cat((all_label_ids, torch.zeros(n_padding_rows + list(all_label_ids.size()[1:]),dtype=all_label_ids.dtype)))
+
+            
+            #print(all_input_ids.size())
+            #We are not sending all_label_ids
+            return all_input_ids, all_visual,all_acoustic,all_input_mask, all_segment_ids, label,torch.tensor([video_len])
+        
+        # #print("aud:",np.array(audio).shape)
+        
+        # X=torch.FloatTensor(self.padded_context_features(text,video,audio,self.max_video_len,self.max_sen_len))
+        
+        # X_word_pos = np.zeros((X.shape[0],X.shape[1]))
+        
+        # for i in range(X.shape[0]):
+            
+        #     word_X = X[i,:,:]
+        #     word_X = word_X.reshape(-1,word_X.shape[-1])
+        #     #Then we check where we need to pad
+        #     padding_rows = np.where(~word_X.cpu().numpy().any(axis=1))[0]
+        #     n_rem_entries= word_X.shape[0] - len(padding_rows)
+        #     #Then, we simple add the padding entries
+        #     cur_X_word_pos = np.concatenate(( np.zeros((len(padding_rows),)), np.array([pos+1 for pos in range(n_rem_entries)])))
+        #     #After that, we need to reshape
+        #     X_word_pos[i,:] = cur_X_word_pos
+        # #my_logger.debug("X_pos:",X_pos," Len:",X_pos.shape)
+        # X_word_pos = torch.LongTensor(X_word_pos) 
+        
+        
+        # sentence_X = X.reshape(X.shape[0],-1)
+        # padding_rows = np.where(~sentence_X.cpu().numpy().any(axis=1))[0]
+        # n_rem_entries= sentence_X.shape[0] - len(padding_rows)
+        # #Then, we simple add the padding entries
+        # X_sentence_pos = np.concatenate(( np.zeros((len(padding_rows),)), np.array([pos+1 for pos in range(n_rem_entries)])))
+        # X_sentence_pos = torch.LongTensor(X_sentence_pos) 
+        
+        # #an extra [] is necessary since we are getting a float this time
+        # Y=torch.FloatTensor([self.y_labels["labels"][hid][self.config["target_label_index"]]])
+        
+        # if(self.config["loss_function"] !='ll1'):
+        #     label_index = self.config["target_label_index"]
+
+        #     target_median_val = self.config["y_score_median_values"][label_index]
+
+        #     Y= (Y>= target_median_val)
+        #     #We are doing it for "soft" labeling
+        #     #Y = torch.sigmoid(Y - target_median_val)
+
+            
+                
+        # return X,X_word_pos,X_sentence_pos,Y
+    
 class InputFeatures(object):
     """A single set of features of data."""
 
@@ -95,10 +259,12 @@ class InputFeatures(object):
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.label_id = label_id
+    def __str__(self):
+        return "inputs_ids:{0},visual:{1},acoustic:{2},input_mask:{3},segment:{4},label_id:{5}".format(self.input_ids,self.visual,self.acoustic,self.input_mask,self.segment_ids,self.label_id)
 
 
 
-@bert_multi_ex.config
+@ets_bert_ex.config
 def cnf():
     dataset_location=None
     bert_model=None
@@ -115,7 +281,7 @@ def cnf():
     max_seq_length=128
     train_batch_size=32
     learning_rate=5e-5
-    num_train_epochs=40.0
+    num_train_epochs=20.0
     seed=None
     output_dir = None
     server_ip = None
@@ -143,12 +309,17 @@ def cnf():
     save_mode='best'
     d_acoustic_in=0
     d_visual_in = 0
-    h_audio_lstm = 0
-    h_video_lstm = 0
-    h_merge_sent = 0
+    h_merge_sent=0
+    
+    max_num_sentences=0
+    Y_size=0
+    target_label_index=0
     
     if prototype:
-        num_train_epochs=2
+        num_train_epochs=1
+    prot_train=2
+    prot_dev=1
+    prot_test=1
         
     
 
@@ -170,23 +341,28 @@ def multi_collate(batch):
     return sentences, visual, acoustic, labels, lengths
 
 
-@bert_multi_ex.capture
+@ets_bert_ex.capture
 def convert_examples_to_features(examples, label_list, max_seq_length,
                                  tokenizer, output_mode,_config):
     """Loads a data file into a list of `InputBatch`s."""
     #print("label_list:",label_list)
-
+    (all_words,all_visual,all_acoustic,label,segment,id_2_word) = examples
     label_map = {label : i for i, label in enumerate(label_list)}
-    with open(os.path.join(_config["dataset_location"],'word2id.pickle'), 'rb') as handle:
-        word_2_id = pickle.load(handle)
-    id_2_word = { id_:word for (word,id_) in word_2_id.items()}
-    #print(id_2_word)
+    #print(len(words),len(visual),len(acoustic),len(label),len(segment),len(id_2_word))
+    #print(segment,label)
     
-
+   
+    
+    
     features = []
-    for (ex_index, example) in enumerate(examples):
-       
-        (words, visual, acoustic), label, segment = example
+    vid_len = len(all_words)
+    label=np.array(label)
+    for i in range(min(vid_len,_config["max_num_sentences"])): 
+    #(ex_index, example) in enumerate(examples):
+        words = np.array(all_words[i])
+        visual = np.array(all_visual[i])
+        acoustic = np.array(all_acoustic[i])
+        #(words, visual, acoustic), label, segment = example
         #print(words,label, segment)
         #we will look at acoustic and visual later
         words = " ".join([id_2_word[w] for w in words])
@@ -308,11 +484,17 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
                               input_mask=input_mask,
                               segment_ids=segment_ids,
                               label_id=label_id,))
-    return features
+    return features,vid_len
 
 
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):
-    """Truncates a sequence pair in place to the maximum length."""
+    """Truncates a sequence pair in place to the maximum length.""" 
+    if output_mode == "classification":
+        all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
+    elif output_mode == "regression":
+        all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.float)
+
+    dataset = TensorDataset(all_input_ids, all_visual,all_acoustic,all_input_mask, all_segment_ids, all_label_ids)
 
     # This is a simple heuristic which will always truncate the longer sequence
     # one token at a time. This makes more sense than truncating an equal percent
@@ -327,7 +509,7 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
         else:
             tokens_b.pop()
 
-@bert_multi_ex.capture
+@ets_bert_ex.capture
 def get_appropriate_dataset(data,tokenizer, output_mode,_config):
     features = convert_examples_to_features(
             data, _config["label_list"],_config["max_seq_length"], tokenizer, output_mode)
@@ -347,34 +529,94 @@ def get_appropriate_dataset(data,tokenizer, output_mode,_config):
     dataset = TensorDataset(all_input_ids, all_visual,all_acoustic,all_input_mask, all_segment_ids, all_label_ids)
     return dataset
    
-        
-@bert_multi_ex.capture
+
+def load_pickle(pickle_file):
+    try:
+        with open(pickle_file, 'rb') as f:
+            pickle_data = pickle.load(f)
+    except UnicodeDecodeError as e:
+        with open(pickle_file, 'rb') as f:
+            pickle_data = pickle.load(f, encoding='latin1')
+    except Exception as e:
+        print('Unable to load data ', pickle_file, ':', e)
+        raise
+    return pickle_data        
+@ets_bert_ex.capture
 def set_up_data_loader(_config):
     
-    # #MUST remove it
-   
-    # train_examples = None
-    # num_train_optimization_steps = None
-    # if args.do_train:
-    #     train_examples = processor.get_train_examples(args.data_dir)
-    #     #print("Train examples:",train_examples)
-    #     #assert False
-    #     num_train_optimization_steps = int(
-    #         len(train_examples) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
-    #     if args.local_rank != -1:
-    #         num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
+    
+    
+    dataset_id_file= os.path.join(_config["dataset_location"], "revised_id_list.pkl")
+    dataset_id=load_pickle(dataset_id_file)
+    train=dataset_id['train']
+    dev=dataset_id['dev']
+    test=dataset_id['test']
+    #print("real sizes:",len(train),len(dev),len(test))
+    if(_config["prototype"]):
+        train_num = _config["prot_train"]
+        dev_num = _config["prot_dev"]
+        test_num = _config["prot_test"]
+        #dev=dataset_id['train']
+        
+
+
+        train=train[:train_num]
+        dev=dev[:dev_num]
+        test=test[:test_num]
+        #print("train:",train)
+        #print("dev:",dev)
+    
+    data_path = _config["dataset_location"]    
+    facet_file= os.path.join(data_path,'revised_facet.pkl')
+    covarep_file=os.path.join(data_path,"covarep.pkl")
+    word_vec_file=os.path.join(data_path,"glove_index.pkl")
+    y_labels = os.path.join(data_path,"video_labels.pkl")
+    id_2_word_file =  os.path.join(data_path,"ets_word_list.pkl")
+        
+    word_aligned_facet_sdk=load_pickle(facet_file)
+    word_aligned_covarep_sdk=load_pickle(covarep_file)
+    word_embedding_idx_sdk=load_pickle(word_vec_file)
+    y_labels_sdk = load_pickle(y_labels)
+    id_2_word = load_pickle(id_2_word_file)['data']
+    #print(id_2_word)
+    all_data = (word_aligned_facet_sdk,word_aligned_covarep_sdk,word_embedding_idx_sdk,y_labels_sdk,id_2_word)
+    tokenizer = BertTokenizer.from_pretrained(_config["bert_model"], do_lower_case=_config["do_lower_case"])
+
+    
+    training_set = ETSDataset(train,_config,all_data,tokenizer)
+    dev_set = ETSDataset(dev,_config,all_data,tokenizer)
+    test_set = ETSDataset(test,_config,all_data,tokenizer)
+
+    
+    #print("dataset init")
+    #print("In train dataloader:",_config["train_batch_size"])
+    train_dataloader = DataLoader(training_set, batch_size=_config["train_batch_size"],
+                        shuffle=_config["shuffle"], num_workers=_config["num_workers"])
+    
+    dev_dataloader = DataLoader(dev_set, batch_size=_config["dev_batch_size"],
+                        shuffle=_config["shuffle"], num_workers=_config["num_workers"])
+    
+    test_dataloader = DataLoader(test_set, batch_size=_config["test_batch_size"],
+                        shuffle=_config["shuffle"], num_workers=_config["num_workers"])
+    num_train_optimization_steps = int(len(training_set) / _config["train_batch_size"] / _config["gradient_accumulation_steps"]) * _config["num_train_epochs"]
+
+    
+    #print("data loader prepared")
+    #my_logger.debug(train_X.shape,train_Y.shape,dev_X.shape,dev_Y.shape,test_X.shape,test_Y.shape)
+    #data_loader = test_data_loader(train_X,train_Y,_config)
+    return train_dataloader,dev_dataloader,test_dataloader,num_train_optimization_steps
     
         
-    with open(os.path.join(_config["dataset_location"],'all_mod_data.pickle'), 'rb') as handle:
-        all_data = pickle.load(handle)
-    train_data = all_data["train"]
-    dev_data=all_data["dev"]
-    test_data=all_data["test"]
+    # with open(os.path.join(_config["dataset_location"],'all_mod_data.pickle'), 'rb') as handle:
+    #     all_data = pickle.load(handle)
+    # train_data = all_data["train"]
+    # dev_data=all_data["dev"]
+    # test_data=all_data["test"]
     
-    if(_config["prototype"]):
-        train_data=train_data[:100]
-        dev_data=dev_data[:100]
-        test_data=test_data[:100]     
+    # if(_config["prototype"]):
+    #     train_data=train_data[:100]
+    #     dev_data=dev_data[:100]
+    #     test_data=test_data[:100]     
     
     
     tokenizer = BertTokenizer.from_pretrained(_config["bert_model"], do_lower_case=_config["do_lower_case"])
@@ -409,7 +651,7 @@ def set_up_data_loader(_config):
 
 
 
-@bert_multi_ex.capture
+@ets_bert_ex.capture
 def set_random_seed(seed):
     """
     This function controls the randomness by setting seed in all the libraries we will use.
@@ -420,13 +662,13 @@ def set_random_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
 
-@bert_multi_ex.capture
+@ets_bert_ex.capture
 def prep_for_training(num_train_optimization_steps,_config):
     tokenizer = BertTokenizer.from_pretrained(_config["bert_model"], do_lower_case=_config["do_lower_case"])
 
 
     # TODO:Change model here
-    model = MultimodalBertForSequenceClassification.multimodal_from_pretrained(_config["bert_model"],newly_added_config = _config,
+    model = ETSBertForSequenceClassification.multimodal_from_pretrained(_config["bert_model"],newly_added_config = _config,
               cache_dir=_config["cache_dir"],
               num_labels=_config["num_labels"])
    
@@ -448,20 +690,20 @@ def prep_for_training(num_train_optimization_steps,_config):
     
     return model,optimizer,tokenizer
 
-@bert_multi_ex.capture
+@ets_bert_ex.capture
 def train_epoch(model,train_dataloader,optimizer,_config):
-        model.train()
         tr_loss = 0
         nb_tr_examples, nb_tr_steps = 0, 0
         for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
             batch = tuple(t.to(_config["device"]) for t in batch)
-            input_ids, visual,acoustic,input_mask, segment_ids, label_ids = batch
-            visual = torch.squeeze(visual,1)
-            acoustic = torch.squeeze(acoustic,1)
-            #print("visual:",visual.shape," acoustic:",acoustic.shape," model type:",type(model))
-            #assert False
+            input_ids, visual,acoustic,input_mask, segment_ids, label_ids,video_lens = batch
+            visual = torch.squeeze(visual,2)
+            acoustic = torch.squeeze(acoustic,2)
+            #print("visual:",visual.shape," acoustic:",acoustic.shape," video_lens:",video_lens.shape)
             # define a new function to compute loss values for both output_modes
             logits = model(input_ids, visual,acoustic,segment_ids, input_mask, labels=None)
+            #assert False
+
 
             if _config["output_mode"] == "classification":
                 loss_fct = CrossEntropyLoss()
@@ -486,7 +728,7 @@ def train_epoch(model,train_dataloader,optimizer,_config):
                 #global_step += 1   
         return tr_loss
 
-@bert_multi_ex.capture
+@ets_bert_ex.capture
 def eval_epoch(model,dev_dataloader,optimizer,_config):
     model.eval()
     dev_loss = 0
@@ -522,7 +764,7 @@ def eval_epoch(model,dev_dataloader,optimizer,_config):
  
     return dev_loss
    
-@bert_multi_ex.capture
+@ets_bert_ex.capture
 def test_epoch(model,data_loader,_config):
     ''' Epoch operation in evaluation phase '''
    
@@ -590,7 +832,7 @@ def test_epoch(model,data_loader,_config):
 
     return preds,all_labels  
    
-@bert_multi_ex.capture
+@ets_bert_ex.capture
 def test_score_model(model,test_data_loader,_config,_run):
     
     predictions,y_test = test_epoch(model,test_data_loader)
@@ -632,7 +874,7 @@ def test_score_model(model,test_data_loader,_config,_run):
              "Classification Report":classification_report_score}
     return accuracy
             
-@bert_multi_ex.capture
+@ets_bert_ex.capture
 def train(model, train_dataloader, validation_dataloader,test_data_loader,optimizer,_config,_run):
     ''' Start training '''
     model_path = _config["best_model_path"]
@@ -678,7 +920,7 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
     #After the entire training is over, save the best model as artifact in the mongodb
     
     
-@bert_multi_ex.automain
+@ets_bert_ex.automain
 def main(_config):
     
     set_random_seed(_config["seed"])
@@ -688,7 +930,7 @@ def main(_config):
     model,optimizer,tokenizer = prep_for_training(num_train_optimization_steps)
 
     train(model, train_data_loader,dev_data_loader,test_data_loader,optimizer)
-    # assert False
+    assert False
 
     #TODO:need to fix it
     # test_accuracy = test_score(test_data_loader,criterion)

@@ -11,12 +11,14 @@ import os
 import argparse, sys
 from global_configs import *
 from sacred import Experiment
+import numpy as np
 
 skeleton_ex = Experiment('launcher')
 from sample_example_driver import main_ex
 #works on text only
 from bert_mosi_driver import bert_ex
 from bert_multi_mosi_driver import bert_multi_ex
+from ets_bert_driver import ets_bert_ex
 
 
 
@@ -25,6 +27,7 @@ parser.add_argument('--dataset', help='the dataset you want to work on')
 
 dataset_specific_config = {
         "mosi":{'input_modalities_sizes':[300,5,20],'output_mode':'regression','label_list':[None],'dev_batch_size':229,'test_batch_size':685,'d_acoustic_in':74,'d_visual_in':47},
+        "ETS":{'input_modalities_sizes':[1,81,35],'output_mode':'regression','label_list':[None],'dev_batch_size':229,'test_batch_size':685,'d_acoustic_in':81,'d_visual_in':35,'max_num_sentences':20,'max_seq_length':30, 'Y_size':6,'target_label_index':0},
         "iemocap":{'text_indices':(0,300),'audio_indices':(300,374),'video_indices':(374,409),'max_seq_len':21},
         "mmmo":{'text_indices':(0,300),'audio_indices':(300,374),'video_indices':(374,409),'max_seq_len':21},
         "moud":{'text_indices':(0,300),'audio_indices':(300,374),'video_indices':(374,409),'max_seq_len':21},
@@ -72,6 +75,11 @@ def initiate_main_experiment(_config):
     main_init_configs["max_seq_length"]  = 35 #TODO:May be shortened
     main_init_configs["train_batch_size"] =  32 
     main_init_configs["learning_rate"]  = 2e-5 
+    main_init_configs["h_merge_sent"] = 768
+    
+    main_init_configs["h_audio_lstm"] = np.random.choice([32, 64,128])
+    main_init_configs["h_video_lstm"] = np.random.choice([32, 64,48])
+    
     #main_init_configs["num_train_epochs"] =  50.0
     #commenting out temporarily
     main_init_configs["output_dir"] =  "/tmp/"+TASK_NAME
@@ -81,7 +89,10 @@ def initiate_main_experiment(_config):
     
     #print("inherited this configs:",main_init_configs,main_init_configs.keys())
     #result = bert_ex.run(command_name="main",config_updates=main_init_configs)
-    result = bert_multi_ex.run(command_name="main",config_updates=main_init_configs)
+    if dataset_name=="mosi":
+        result = bert_multi_ex.run(command_name="main",config_updates=main_init_configs)
+    elif dataset_name=="ETS": 
+        result = ets_bert_ex.run(command_name="main",config_updates=main_init_configs)
 
     #must use seed for the main exp
 
@@ -101,6 +112,7 @@ def run_a_config(dataset_location):
     
     
 #run it like ./bert_running_different_configs.py --dataset=mosi
+#run: ./bert_running_different_configs.py --dataset=ETS    
 if __name__ == '__main__':
     args = parser.parse_args()
     dataset_path = os.path.join(all_datasets_location,args.dataset)
