@@ -137,7 +137,7 @@ def cnf():
     test_batch_size=None
     shuffle=True
     num_workers=2
-    best_model_path =  "/scratch/echowdh2/saved_models_from_projects/bert_transformer/"+str(node_index) +"_best_model.chkpt"
+    best_model_path =  "/scratch/mhasan8/saved_models_from_projects/bert_transformer/"+str(node_index) +"_best_model.chkpt"
     loss_function="ll1"
     save_model=True
     save_mode='best'
@@ -146,6 +146,9 @@ def cnf():
     h_audio_lstm = 0
     h_video_lstm = 0
     h_merge_sent = 0
+    
+    fc1_out=0
+    fc1_dropout=0
     
     if prototype:
         num_train_epochs=2

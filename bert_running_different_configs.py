@@ -47,7 +47,7 @@ else:
 #So, we are assuming that there will a folder called /processed_multimodal_data in the parent folder
 #of this code. I wanted to keep it inside the .git folder. But git push limits file size to be <=100MB
 #and some data files exceeds that size.
-all_datasets_location = "../processed_multimodal_data"
+all_datasets_location = "/scratch/mhasan8/processed_multimodal_data"
 
 @skeleton_ex.config
 def sk_config():
@@ -62,8 +62,8 @@ def initiate_main_experiment(_config):
 
                               "prototype":conf_prototype,'dataset_location':dataset_location,"dataset_name":dataset_name}
     
-    GLUE_DIR="/home/echowdh2/Research_work/processed_multimodal_data/"
-    CACHE_DIR="/home/echowdh2/Research_work/processed_multimodal_data/MRPC/model_cache"
+    GLUE_DIR="/scratch/mhasan8/processed_multimodal_data/"
+    CACHE_DIR="/scratch/mhasan8/processed_multimodal_data/MRPC/model_cache"
     TASK_NAME=dataset_name
     main_init_configs["task_name"] = TASK_NAME
     main_init_configs["do_train"]  = True
@@ -77,8 +77,11 @@ def initiate_main_experiment(_config):
     main_init_configs["learning_rate"]  = 2e-5 
     main_init_configs["h_merge_sent"] = 768
     
-    main_init_configs["h_audio_lstm"] = np.random.choice([32, 64,128])
-    main_init_configs["h_video_lstm"] = np.random.choice([32, 64,48])
+    main_init_configs["h_audio_lstm"] = np.random.choice([16,32,48,64,56,128])
+    main_init_configs["h_video_lstm"] = np.random.choice([16,32,48,64,56])
+    
+    main_init_configs["fc1_out"] = np.random.choice([32,64,128,512])
+    main_init_configs["fc1_dropout"] = np.random.choice([0.1,0.2,0.3,0.4,0.45,0.5,0.6])
     
     #main_init_configs["num_train_epochs"] =  50.0
     #commenting out temporarily
@@ -88,8 +91,8 @@ def initiate_main_experiment(_config):
 
     
     #print("inherited this configs:",main_init_configs,main_init_configs.keys())
-    result = bert_ex.run(command_name="main",config_updates=main_init_configs)
-    return
+    #result = bert_ex.run(command_name="main",config_updates=main_init_configs)
+    #return
     if dataset_name=="mosi":
         result = bert_multi_ex.run(command_name="main",config_updates=main_init_configs)
     elif dataset_name=="ETS": 
@@ -118,7 +121,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     dataset_path = os.path.join(all_datasets_location,args.dataset)
     if(os.path.isdir(dataset_path)):
-        run_a_config(dataset_path)
+        while(True):
+            run_a_config(dataset_path)
         
     else:
         raise NotADirectoryError("Please input the dataset name correctly")

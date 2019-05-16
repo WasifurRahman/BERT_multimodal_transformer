@@ -31,6 +31,7 @@ from io import open
 import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
+import torch.nn.functional as F
 
 from .file_utils import cached_path, WEIGHTS_NAME, CONFIG_NAME
 
@@ -1388,24 +1389,31 @@ class MultimodalBertForSequenceClassification(BertPreTrainedModel):
         self.newly_added_config = newly_added_config
         self.bert = MultimodalBertModel(config,newly_added_config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        #self.summary_audio_visual = Summary_AV(config,newly_added_config)
+        self.summary_audio_visual = Summary_AV(config,newly_added_config)
 
-        self.classifier = nn.Linear(config.hidden_size, num_labels)
-        #self.classifier = nn.Linear(config.hidden_size + newly_added_config['h_audio_lstm'] + newly_added_config['h_video_lstm'], num_labels)
+        #self.classifier = nn.Linear(config.hidden_size, num_labels)
+        self.fc1 = nn.Linear(config.hidden_size + newly_added_config['h_audio_lstm'] + newly_added_config['h_video_lstm'], newly_added_config['fc1_out'])
+        self.fc1_dropout=nn.Dropout(newly_added_config['fc1_dropout'])
+        self.fc2 = nn.Linear(newly_added_config['fc1_out'],num_labels)
+        
         self.apply(self.init_bert_weights)
         print("Inside the multimodal class")
         #assert False
 
     def forward(self, input_ids,visual,acoustic,token_type_ids=None, attention_mask=None, labels=None):
-        _, pooled_output = self.bert(input_ids, visual,acoustic,token_type_ids, attention_mask, output_all_encoded_layers=False)
+        all_output, pooled_output = self.bert(input_ids, visual,acoustic,token_type_ids, attention_mask, output_all_encoded_layers=False)
         pooled_output = self.dropout(pooled_output)
-        
+        print("****all output size*****",all_output.shape)
+        print("***pooled_outputsize***",pooled_output.shape)
+        print("acoustic size",acoustic.shape)
+        print("visual size",visual.shape)
         #added for summay AV
-        # audio_video_emb = self.summary_audio_visual(pooled_output,acoustic,visual)
-        # multi_emb = torch.cat((pooled_output,audio_video_emb),dim=1)
-        # logits = self.classifier(multi_emb)
+        audio_video_emb = self.summary_audio_visual(pooled_output,acoustic,visual)
+        multi_emb = torch.cat((pooled_output,audio_video_emb),dim=1)
         
-        logits = self.classifier(pooled_output)
+        logits = self.fc2(self.fc1_dropout(F.relu(self.fc1(multi_emb))))
+        
+        #logits = self.classifier(pooled_output)
 
 
         if labels is not None:
