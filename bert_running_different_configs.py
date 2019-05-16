@@ -74,8 +74,11 @@ def initiate_main_experiment(_config):
     main_init_configs["bert_model"] = "bert-base-uncased"
     main_init_configs["max_seq_length"]  = 35 #TODO:May be shortened
     main_init_configs["train_batch_size"] =  32 
-    main_init_configs["learning_rate"]  = 2e-5 
+    main_init_configs["learning_rate"]  = np.random.choice([2e-5,2e-6,2e-4]) 
     main_init_configs["h_merge_sent"] = 768
+    main_init_configs["acoustic_in_dim"] = 74
+    main_init_configs["visual_in_dim"] = 47
+    main_init_configs["hidden_dropout_prob"]=np.random.choice([0.1,0.2,0.3,0.4,0.45,0.5,0.6])
     
     main_init_configs["h_audio_lstm"] = np.random.choice([16,32,48,64,56,128])
     main_init_configs["h_video_lstm"] = np.random.choice([16,32,48,64,56])

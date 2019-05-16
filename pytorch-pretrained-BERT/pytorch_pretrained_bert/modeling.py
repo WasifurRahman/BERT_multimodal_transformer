@@ -333,20 +333,22 @@ class  Audio_visual_mapper(nn.Module):
     """
     def __init__(self, config,newly_added_config):
         super(Audio_visual_mapper, self).__init__()
-        self.acoustic_embeddings = nn.Linear(newly_added_config["d_acoustic_in"],config.hidden_size)
-        self.drop_acoustic = nn.Dropout(config.hidden_dropout_prob)
+        
+        #self.acoustic_embeddings = nn.Linear(newly_added_config["d_acoustic_in"],config.hidden_size)
+        #self.drop_acoustic = nn.Dropout(config.hidden_dropout_prob)
 
-        self.visual_embeddings = nn.Linear(newly_added_config["d_visual_in"],config.hidden_size)
-        self.drop_visual = nn.Dropout(config.hidden_dropout_prob)
+        #self.visual_embeddings = nn.Linear(newly_added_config["d_visual_in"],config.hidden_size)
+        #self.drop_visual = nn.Dropout(config.hidden_dropout_prob)
 
-        self.weight_acoustic = torch.autograd.Variable(torch.rand(1).to(newly_added_config["device"]), requires_grad=True).to(newly_added_config["device"])
-        self.weight_visual = torch.autograd.Variable(torch.rand(1).to(newly_added_config["device"]), requires_grad=True).to(newly_added_config["device"])
+        #self.weight_acoustic = torch.autograd.Variable(torch.rand(1).to(newly_added_config["device"]), requires_grad=True).to(newly_added_config["device"])
+        #self.weight_visual = torch.autograd.Variable(torch.rand(1).to(newly_added_config["device"]), requires_grad=True).to(newly_added_config["device"])
         
         
         # self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0)
         # self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         # self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
-
+        self.audio_visual_gate=nn.Linear(newly_added_config["d_acoustic_in"]+newly_added_config["d_visual_in"]+newly_added_config["h_merge_sent"],newly_added_config["h_merge_sent"])
+        self.acoustic_vis_mapping = nn.Linear(newly_added_config["d_acoustic_in"]+newly_added_config["d_visual_in"],newly_added_config["h_merge_sent"])
         # # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # # any TensorFlow checkpoint file
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
@@ -366,10 +368,20 @@ class  Audio_visual_mapper(nn.Module):
         # embeddings = words_embeddings + position_embeddings + token_type_embeddings
         # embeddings = self.LayerNorm(embeddings)
         # embeddings = self.dropout(embeddings)
-        acoustic_embedding = self.drop_acoustic(self.acoustic_embeddings(acoustic))
-        visual_embedding = self.drop_visual(self.visual_embeddings(visual))
-        acous_vis_embedding = acoustic_embedding * self.weight_acoustic.expand_as(acoustic_embedding) + visual_embedding * self.weight_visual.expand_as(visual_embedding)
-        embedding_output = self.final_dropout(self.LayerNorm(acous_vis_embedding + text_embedding))
+        #acoustic_embedding = self.drop_acoustic(self.acoustic_embeddings(acoustic))
+        #visual_embedding = self.drop_visual(self.visual_embeddings(visual))
+        #acous_vis_embedding = acoustic_embedding * self.weight_acoustic.expand_as(acoustic_embedding) + visual_embedding * self.weight_visual.expand_as(visual_embedding)
+
+        all_emb=torch.cat((text_embedding,acoustic,visual),dim=-1)
+        
+        key=F.relu(self.audio_visual_gate(all_emb))
+        
+        acoustic_vis_embedding = self.acoustic_vis_mapping(torch.cat((acoustic,visual),dim=-1))
+
+        acoustic_vis_embedding = key*acoustic_vis_embedding
+        
+        embedding_output = self.final_dropout(self.LayerNorm(acoustic_vis_embedding + text_embedding))
+        
         return embedding_output
 
 
@@ -1045,7 +1057,7 @@ class MultimodalBertModel(BertPreTrainedModel):
         embedding_output = self.embeddings(input_ids, token_type_ids)
         #print("embedding_out:",embedding_output.size(), "acoustic:",acoustic.size()," visual:",visual.size())
         #print("The newly config:",self.newly_added_config)
-        embedding_output = self.map_audio_visual(embedding_output,acoustic,visual)
+        #embedding_output = self.map_audio_visual(embedding_output,acoustic,visual)
         #assert False
         encoded_layers = self.encoder(embedding_output,
                                       extended_attention_mask,
@@ -1388,13 +1400,13 @@ class MultimodalBertForSequenceClassification(BertPreTrainedModel):
         self.num_labels = num_labels
         self.newly_added_config = newly_added_config
         self.bert = MultimodalBertModel(config,newly_added_config)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.dropout = nn.Dropout(newly_added_config["hidden_dropout_prob"])
         self.summary_audio_visual = Summary_AV(config,newly_added_config)
 
-        #self.classifier = nn.Linear(config.hidden_size, num_labels)
-        self.fc1 = nn.Linear(config.hidden_size + newly_added_config['h_audio_lstm'] + newly_added_config['h_video_lstm'], newly_added_config['fc1_out'])
-        self.fc1_dropout=nn.Dropout(newly_added_config['fc1_dropout'])
-        self.fc2 = nn.Linear(newly_added_config['fc1_out'],num_labels)
+        self.classifier = nn.Linear(config.hidden_size, num_labels)
+        #self.fc1 = nn.Linear(config.hidden_size + newly_added_config['h_audio_lstm'] + newly_added_config['h_video_lstm'], newly_added_config['fc1_out'])
+        #self.fc1_dropout=nn.Dropout(newly_added_config['fc1_dropout'])
+        #self.fc2 = nn.Linear(newly_added_config['fc1_out'],num_labels)
         
         self.apply(self.init_bert_weights)
         print("Inside the multimodal class")
@@ -1403,17 +1415,14 @@ class MultimodalBertForSequenceClassification(BertPreTrainedModel):
     def forward(self, input_ids,visual,acoustic,token_type_ids=None, attention_mask=None, labels=None):
         all_output, pooled_output = self.bert(input_ids, visual,acoustic,token_type_ids, attention_mask, output_all_encoded_layers=False)
         pooled_output = self.dropout(pooled_output)
-        print("****all output size*****",all_output.shape)
-        print("***pooled_outputsize***",pooled_output.shape)
-        print("acoustic size",acoustic.shape)
-        print("visual size",visual.shape)
+
         #added for summay AV
-        audio_video_emb = self.summary_audio_visual(pooled_output,acoustic,visual)
-        multi_emb = torch.cat((pooled_output,audio_video_emb),dim=1)
+        #audio_video_emb = self.summary_audio_visual(pooled_output,acoustic,visual)
+        #multi_emb = torch.cat((pooled_output,audio_video_emb),dim=1)
         
-        logits = self.fc2(self.fc1_dropout(F.relu(self.fc1(multi_emb))))
+        #logits = self.fc2(self.fc1_dropout(F.relu(self.fc1(multi_emb))))
         
-        #logits = self.classifier(pooled_output)
+        logits = self.classifier(pooled_output)
 
 
         if labels is not None:

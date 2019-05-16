@@ -4,7 +4,7 @@
 #SBATCH -p gpu --gres=gpu:1
 #SBATCH --mem=16gb
 #SBATCH -c 4
-#SBATCH -a 26-31
+#SBATCH -a 36-40
 #SBATCH -t 2-00:00:00  
 #SBATCH -J bert_mhasan8
 #SBATCH -o /scratch/mhasan8/output/bert_output%j

@@ -146,9 +146,11 @@ def cnf():
     h_audio_lstm = 0
     h_video_lstm = 0
     h_merge_sent = 0
-    
+    acoustic_in_dim=0
+    visual_in_dim=0
     fc1_out=0
     fc1_dropout=0
+    hidden_dropout_prob=0
     
     if prototype:
         num_train_epochs=2
