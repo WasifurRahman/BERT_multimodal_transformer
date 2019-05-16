@@ -1470,10 +1470,15 @@ class ETSBertForSequenceClassification(BertPreTrainedModel):
         self.bert = ETSBertModel(config,newly_added_config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         
-        self.merge_sent_lstm =nn.LSTM(input_size =self.config.hidden_size,\
-                                                       hidden_size = self.newly_added_config['h_merge_sent'],batch_first=True)
-        self.classifier = nn.Linear(config.hidden_size, num_labels)
-        self.apply(self.init_bert_weights)
+        # self.merge_sent_lstm =nn.LSTM(input_size =self.config.hidden_size,\
+        #                                                hidden_size = self.newly_added_config['h_merge_sent'],batch_first=True)
+        # #self.classifier = nn.Linear(config.hidden_size, num_labels)
+        # self.classifier = nn.Linear(self.newly_added_config['h_merge_sent'], num_labels)
+        # self.apply(self.init_bert_weights)
+        
+        #The next part is 2-step linear
+        self.sent_classifier = nn.Linear(config.hidden_size,num_labels)
+        self.classifier = nn.Linear(self.newly_added_config["max_num_sentences"],num_labels)
         print("Inside the ETS model")
         #assert False
 
@@ -1492,17 +1497,25 @@ class ETSBertForSequenceClassification(BertPreTrainedModel):
         
         pooled_output = torch.reshape(pooled_output,(-1,self.newly_added_config["max_num_sentences"],self.config.hidden_size))
         #print("bert encoder output:{0},{1}".format(pooled_output,pooled_output.size()))
-
-        h = torch.zeros(pooled_output.shape[0],\
-                        self.newly_added_config['h_merge_sent']).unsqueeze(0).to(self.newly_added_config["device"])
-        c = torch.zeros(pooled_output.shape[0],\
-                        self.newly_added_config['h_merge_sent']).unsqueeze(0).to(self.newly_added_config["device"])
+        pooled_output[torch.isnan(pooled_output)]=0
         
-        _,(h_last,c_last) = self.merge_sent_lstm(pooled_output,(h,c))
-        #print("LSTM output:{0},{1}".format(h_last,h_last.size()))
-        h_last = h_last.squeeze(0)
+        #The next part is just linear mapping
+        sent_scores = self.sent_classifier(pooled_output).squeeze(-1)
+        #print("sent scores shape:{0}".format(sent_scores.size()))
+        logits = self.classifier(sent_scores)
+        
+        
+        #we tried to do an lstm modelling here but failed
+        # h = torch.zeros(pooled_output.shape[0],\
+        #                 self.newly_added_config['h_merge_sent']).unsqueeze(0).to(self.newly_added_config["device"])
+        # c = torch.zeros(pooled_output.shape[0],\
+        #                 self.newly_added_config['h_merge_sent']).unsqueeze(0).to(self.newly_added_config["device"])
+        
+        # _,(h_last,c_last) = self.merge_sent_lstm(pooled_output,(h,c))
+        # #print("LSTM output:{0},{1}".format(h_last,h_last.size()))
+        # h_last = h_last.squeeze(0)
 
-        logits = self.classifier(h_last)
+        # logits = self.classifier(h_last)
 
         if labels is not None:
             loss_fct = CrossEntropyLoss()

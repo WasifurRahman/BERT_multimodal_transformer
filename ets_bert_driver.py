@@ -168,7 +168,7 @@ class ETSDataset(Dataset):
             #print("checking 0 index:{0} and text len{1}:".format(self.id_2_word[0],text.shape))
             #max_num_sentence
             #if(text.shape[0] <)
-            label=torch.FloatTensor([self.y_labels["labels"][hid][self.config["target_label_index"]]])
+            label=torch.FloatTensor([self.y_labels["labels"][hid][self.config["target_label_index"]] - self.config["label_median"]])
             data = (text,visual,acoustic,label,hid,self.id_2_word)
             features,video_len = convert_examples_to_features(data, self.config["label_list"],self.config["max_seq_length"], self.tokenizer, self.config["output_mode"])
             #print(features)
@@ -279,7 +279,7 @@ def cnf():
     do_lower_case=True
     cache_dir=None
     max_seq_length=128
-    train_batch_size=32
+    train_batch_size=2
     learning_rate=5e-5
     num_train_epochs=20.0
     seed=None
@@ -317,9 +317,18 @@ def cnf():
     
     if prototype:
         num_train_epochs=1
-    prot_train=2
-    prot_dev=1
-    prot_test=1
+        train_batch_size=2
+    prot_train=5
+    prot_dev=5
+    prot_test=2
+    
+    d_acoustic_in=0
+    d_visual_in = 0
+    h_audio_lstm = 0
+    h_video_lstm = 0
+    h_merge_sent = 0
+    
+    label_median=5.6
         
     
 
@@ -599,6 +608,8 @@ def set_up_data_loader(_config):
     test_dataloader = DataLoader(test_set, batch_size=_config["test_batch_size"],
                         shuffle=_config["shuffle"], num_workers=_config["num_workers"])
     num_train_optimization_steps = int(len(training_set) / _config["train_batch_size"] / _config["gradient_accumulation_steps"]) * _config["num_train_epochs"]
+    
+    print("num_t:{0}".format(num_train_optimization_steps))
 
     
     #print("data loader prepared")
@@ -692,6 +703,7 @@ def prep_for_training(num_train_optimization_steps,_config):
 
 @ets_bert_ex.capture
 def train_epoch(model,train_dataloader,optimizer,_config):
+        model.train()
         tr_loss = 0
         nb_tr_examples, nb_tr_steps = 0, 0
         for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
@@ -709,6 +721,7 @@ def train_epoch(model,train_dataloader,optimizer,_config):
                 loss_fct = CrossEntropyLoss()
                 loss = loss_fct(logits.view(-1, _config["num_labels"]), label_ids.view(-1))
             elif _config["output_mode"] == "regression":
+                #print("given:{0},predicted:{1}".format(label_ids,logits))
                 loss_fct = MSELoss()
                 loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
@@ -736,14 +749,15 @@ def eval_epoch(model,dev_dataloader,optimizer,_config):
     with torch.no_grad():
         for step, batch in enumerate(tqdm(dev_dataloader, desc="Iteration")):
             batch = tuple(t.to(_config["device"]) for t in batch)
-
-            input_ids, visual,acoustic,input_mask, segment_ids, label_ids = batch
-            visual = torch.squeeze(visual,1)
-            acoustic = torch.squeeze(acoustic,1)
+            input_ids, visual,acoustic,input_mask, segment_ids, label_ids,video_lens = batch
+            visual = torch.squeeze(visual,2)
+            acoustic = torch.squeeze(acoustic,2)
+            #print("visual:",visual.shape," acoustic:",acoustic.shape," video_lens:",video_lens.shape)
+            # define a new function to compute loss values for both output_modes
+            logits = model(input_ids, visual,acoustic,segment_ids, input_mask, labels=None)
             #print("visual:",visual.shape," acoustic:",acoustic.shape," model type:",type(model))
             #assert False
             # define a new function to compute loss values for both output_modes
-            logits = model(input_ids, visual,acoustic,segment_ids, input_mask, labels=None)
 
 
             if _config["output_mode"] == "classification":
@@ -782,15 +796,12 @@ def test_epoch(model,data_loader,_config):
    
         for batch in tqdm(data_loader, mininterval=2,desc='  - (Validation)   ', leave=False):
             batch = tuple(t.to(_config["device"]) for t in batch)
-
-            input_ids, visual,acoustic,input_mask, segment_ids, label_ids = batch
-            visual = torch.squeeze(visual,1)
-            acoustic = torch.squeeze(acoustic,1)
-            #print("visual:",visual.shape," acoustic:",acoustic.shape," model type:",type(model))
-            #assert False
+            input_ids, visual,acoustic,input_mask, segment_ids, label_ids,video_lens = batch
+            visual = torch.squeeze(visual,2)
+            acoustic = torch.squeeze(acoustic,2)
+            #print("visual:",visual.shape," acoustic:",acoustic.shape," video_lens:",video_lens.shape)
             # define a new function to compute loss values for both output_modes
             logits = model(input_ids, visual,acoustic,segment_ids, input_mask, labels=None)
-
             
             # create eval loss and other metric required by the task
             if _config["output_mode"] == "classification":
@@ -867,7 +878,7 @@ def test_score_model(model,test_data_loader,_config,_run):
     #print(classification_report_score)
     
     accuracy = accuracy_score(true_label, predicted_label)
-    print("Accuracy ",accuracy )
+    print("Accuracy:{0}, F-1 score:{1}".format(accuracy,f_score))
     
     _run.info['final_result']={'accuracy':accuracy,'mae':mae,'corr':corr,"mult_acc":mult,
              "mult_f_score":f_score,"Confusion Matrix":confusion_matrix_result,
@@ -917,6 +928,10 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
                     print('    - [Info] The checkpoint file has been updated.')
                     test_accuracy = test_score_model(model,test_data_loader)
                     _run.log_scalar("test_per_epoch.acc", test_accuracy, epoch_i)
+                else:
+                    print("Not an improved dev model")
+                    test_score_model(model,test_data_loader)
+                    
     #After the entire training is over, save the best model as artifact in the mongodb
     
     
@@ -930,7 +945,7 @@ def main(_config):
     model,optimizer,tokenizer = prep_for_training(num_train_optimization_steps)
 
     train(model, train_data_loader,dev_data_loader,test_data_loader,optimizer)
-    assert False
+    #assert False
 
     #TODO:need to fix it
     # test_accuracy = test_score(test_data_loader,criterion)
