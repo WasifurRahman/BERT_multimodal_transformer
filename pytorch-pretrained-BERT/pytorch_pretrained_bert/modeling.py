@@ -1051,6 +1051,8 @@ class MultimodalBertModel(BertPreTrainedModel):
                                       output_all_encoded_layers=output_all_encoded_layers)
         sequence_output = encoded_layers[-1]
         pooled_output = self.pooler(sequence_output)
+        #print("pooled output:{0},size:{1}".format(pooled_output,pooled_output.shape))
+        #pooled_output[torch.isnan(pooled_output)]=0
         if not output_all_encoded_layers:
             encoded_layers = encoded_layers[-1]
         return encoded_layers, pooled_output
