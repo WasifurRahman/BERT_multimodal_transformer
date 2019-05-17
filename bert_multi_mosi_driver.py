@@ -151,6 +151,7 @@ def cnf():
     fc1_out=0
     fc1_dropout=0
     hidden_dropout_prob=0
+    beta_shift=0
     
     if prototype:
         num_train_epochs=2

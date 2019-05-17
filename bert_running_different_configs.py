@@ -78,7 +78,8 @@ def initiate_main_experiment(_config):
     main_init_configs["h_merge_sent"] = 768
     main_init_configs["acoustic_in_dim"] = 74
     main_init_configs["visual_in_dim"] = 47
-    main_init_configs["hidden_dropout_prob"]=np.random.choice([0.1,0.2,0.3,0.4,0.45,0.5,0.6])
+    main_init_configs["hidden_dropout_prob"]=np.random.choice([0.1,0.2,0.3,0.4,0.45,0.5,0.6,0.8])
+    main_init_configs["beta_shift"]=np.random.choice([0.1,0.2,0.3,0.4,0.5,0.7,0.8,0.9,1,1.2,1.5,2,3,4,5,6,8,16,50])
     
     main_init_configs["h_audio_lstm"] = np.random.choice([16,32,48,64,56,128])
     main_init_configs["h_video_lstm"] = np.random.choice([16,32,48,64,56])

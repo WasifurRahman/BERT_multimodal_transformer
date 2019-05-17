@@ -18,7 +18,8 @@ else:
     #conf_mongo_database_name = 'bert_late_fusion'
     #conf_mongo_database_name = 'bert_late_fusion_no_shift'
     #conf_mongo_database_name = 'bert_gated_shift'
-    conf_mongo_database_name = 'bert_text_only'
+    #conf_mongo_database_name = 'bert_text_only'
+    conf_mongo_database_name = 'multi_gated_shift'
 
 #conf_mongo_database_name = 'mfn_text_only'
 #run by:node_modules/.bin/omniboard -m  bhg0039:27017:last_stand

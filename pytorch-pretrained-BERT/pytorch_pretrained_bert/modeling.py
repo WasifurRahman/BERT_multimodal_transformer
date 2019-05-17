@@ -334,51 +334,41 @@ class  Audio_visual_mapper(nn.Module):
     def __init__(self, config,newly_added_config):
         super(Audio_visual_mapper, self).__init__()
         
-        #self.acoustic_embeddings = nn.Linear(newly_added_config["d_acoustic_in"],config.hidden_size)
-        #self.drop_acoustic = nn.Dropout(config.hidden_dropout_prob)
-
-        #self.visual_embeddings = nn.Linear(newly_added_config["d_visual_in"],config.hidden_size)
-        #self.drop_visual = nn.Dropout(config.hidden_dropout_prob)
-
-        #self.weight_acoustic = torch.autograd.Variable(torch.rand(1).to(newly_added_config["device"]), requires_grad=True).to(newly_added_config["device"])
-        #self.weight_visual = torch.autograd.Variable(torch.rand(1).to(newly_added_config["device"]), requires_grad=True).to(newly_added_config["device"])
+        #multi gated shifting following raven paper
+        self.W_hv = nn.Linear(newly_added_config["d_visual_in"]+newly_added_config["h_merge_sent"],newly_added_config["h_merge_sent"])
+        self.W_ha = nn.Linear(newly_added_config["d_acoustic_in"]+newly_added_config["h_merge_sent"],newly_added_config["h_merge_sent"])
         
+        self.W_v = nn.Linear(newly_added_config["d_visual_in"],newly_added_config["h_merge_sent"])
+        self.W_a = nn.Linear(newly_added_config["d_acoustic_in"],newly_added_config["h_merge_sent"])
+        self.beta = newly_added_config["beta_shift"]
+        self.newly_added_config = newly_added_config
         
-        # self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0)
-        # self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
-        # self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
-        self.audio_visual_gate=nn.Linear(newly_added_config["d_acoustic_in"]+newly_added_config["d_visual_in"]+newly_added_config["h_merge_sent"],newly_added_config["h_merge_sent"])
-        self.acoustic_vis_mapping = nn.Linear(newly_added_config["d_acoustic_in"]+newly_added_config["d_visual_in"],newly_added_config["h_merge_sent"])
-        # # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
-        # # any TensorFlow checkpoint file
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
         self.final_dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, text_embedding,acoustic,visual):
-        # seq_length = input_ids.size(1)
-        # position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
-        # position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
-        # if token_type_ids is None:
-        #     token_type_ids = torch.zeros_like(input_ids)
-
-        # words_embeddings = self.word_embeddings(input_ids)
-        # position_embeddings = self.position_embeddings(position_ids)
-        # token_type_embeddings = self.token_type_embeddings(token_type_ids)
-
-        # embeddings = words_embeddings + position_embeddings + token_type_embeddings
-        # embeddings = self.LayerNorm(embeddings)
-        # embeddings = self.dropout(embeddings)
-        #acoustic_embedding = self.drop_acoustic(self.acoustic_embeddings(acoustic))
-        #visual_embedding = self.drop_visual(self.visual_embeddings(visual))
-        #acous_vis_embedding = acoustic_embedding * self.weight_acoustic.expand_as(acoustic_embedding) + visual_embedding * self.weight_visual.expand_as(visual_embedding)
-
-        all_emb=torch.cat((text_embedding,acoustic,visual),dim=-1)
         
-        key=F.relu(self.audio_visual_gate(all_emb))
+        weight_v= F.relu(self.W_hv(torch.cat((visual,text_embedding),dim=-1)))
+        weight_a= F.relu(self.W_ha(torch.cat((acoustic,text_embedding),dim=-1)))
         
-        acoustic_vis_embedding = self.acoustic_vis_mapping(torch.cat((acoustic,visual),dim=-1))
-
-        acoustic_vis_embedding = key*acoustic_vis_embedding
+        #shift_vector
+        h_m = weight_v * self.W_v(visual) + weight_a * self.W_a(acoustic)
+        
+        em_norm = text_embedding.norm(2,dim=-1)
+        hm_norm = h_m.norm(2,dim=-1)
+        
+        hm_norm_ones=torch.ones(hm_norm.shape,requires_grad=True).to(self.newly_added_config["device"])
+        hm_norm=torch.where(hm_norm==0,hm_norm_ones,hm_norm)
+        #hm_norm[hm_norm==0.]=1.
+        
+        thresh_hold = (em_norm/hm_norm)*self.beta  
+        
+        ones = torch.ones(thresh_hold.shape,requires_grad=True).to(self.newly_added_config["device"])
+        
+        alpha = torch.min(thresh_hold,ones)
+        alpha=alpha.unsqueeze(dim=-1)
+        
+        acoustic_vis_embedding = alpha*h_m
         
         embedding_output = self.final_dropout(self.LayerNorm(acoustic_vis_embedding + text_embedding))
         
@@ -1057,7 +1047,7 @@ class MultimodalBertModel(BertPreTrainedModel):
         embedding_output = self.embeddings(input_ids, token_type_ids)
         #print("embedding_out:",embedding_output.size(), "acoustic:",acoustic.size()," visual:",visual.size())
         #print("The newly config:",self.newly_added_config)
-        #embedding_output = self.map_audio_visual(embedding_output,acoustic,visual)
+        embedding_output = self.map_audio_visual(embedding_output,acoustic,visual)
         #assert False
         encoded_layers = self.encoder(embedding_output,
                                       extended_attention_mask,
