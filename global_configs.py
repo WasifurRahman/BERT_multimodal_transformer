@@ -9,7 +9,7 @@ Created on Sat Mar 16 08:34:31 2019
 running_as_job_array = True
 conf_prototype=False
 conf_inference=False
-conf_url_database = 'bhc0085:27017'
+conf_url_database = 'bhc0004:27017'
 
 if(conf_prototype == True):
     conf_mongo_database_name = 'prototype'
