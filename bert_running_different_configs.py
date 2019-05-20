@@ -78,8 +78,13 @@ def initiate_main_experiment(_config):
     main_init_configs["h_merge_sent"] = 768
     main_init_configs["acoustic_in_dim"] = 74
     main_init_configs["visual_in_dim"] = 47
-    main_init_configs["hidden_dropout_prob"]=np.random.choice([0.1,0.2,0.3,0.4,0.45,0.5,0.6,0.8])
-    main_init_configs["beta_shift"]=np.random.choice([0.1,0.2,0.3,0.4,0.5,0.7,0.8,0.9,1,1.2,1.5,2,3,4,5,6,8,16,50])
+    main_init_configs["hidden_dropout_prob"]=np.random.choice([0.1,0.2,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.65,0.7,0.75,0.8])
+    main_init_configs["beta_shift"]=np.random.choice([0.25,0.3,0.35,0.4,0.45,0.5,0.6,0.7,0.8,0.9,1,1.5,1.8,2,2.2,2.5,2.8,3,3.2,3.4,3.6,3.8,4,4.5,4.8,5,5.5,5.8,6,6.2,6.4,7,8,10,12,14,16,20,22,24,28,30,32,40,44,50,60,70,80,100])
+    
+    # main_init_configs["hidden_dropout_prob"]=0.45
+    # main_init_configs["beta_shift"]=3
+  
+    
     
     main_init_configs["h_audio_lstm"] = np.random.choice([16,32,48,64,56,128])
     main_init_configs["h_video_lstm"] = np.random.choice([16,32,48,64,56])
@@ -87,7 +92,7 @@ def initiate_main_experiment(_config):
     main_init_configs["fc1_out"] = np.random.choice([32,64,128,512])
     main_init_configs["fc1_dropout"] = np.random.choice([0.1,0.2,0.3,0.4,0.45,0.5,0.6])
     
-    #main_init_configs["num_train_epochs"] =  50.0
+    main_init_configs["num_train_epochs"] =  60
     #commenting out temporarily
     main_init_configs["output_dir"] =  "/tmp/"+TASK_NAME
     #fix the seed beforehand

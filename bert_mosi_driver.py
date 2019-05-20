@@ -559,9 +559,15 @@ def test_score_model(model,test_data_loader,_config,_run):
     accuracy = accuracy_score(true_label, predicted_label)
     print("Accuracy ",accuracy )
     
-    _run.info['final_result']={'accuracy':accuracy,'mae':mae,'corr':corr,"mult_acc":mult,
-             "mult_f_score":f_score,"Confusion Matrix":confusion_matrix_result,
-             "Classification Report":classification_report_score}
+    r={'accuracy':accuracy,'mae':mae,'corr':corr,"mult_acc":mult,
+                 "mult_f_score":f_score,"Confusion Matrix":confusion_matrix_result,
+                 "Classification Report":classification_report_score}
+    
+    if 'final_result' in _run.info.keys():
+        _run.info['final_result'].append(r)
+    else:
+        _run.info['final_result']=[r]
+        
     return accuracy
             
 @bert_ex.capture
