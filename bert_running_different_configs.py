@@ -93,7 +93,10 @@ def initiate_main_experiment(_config):
     if dataset_name=="mosi":
         result = bert_multi_ex.run(command_name="main",config_updates=main_init_configs)
     elif dataset_name=="ETS": 
-        result = ets_bert_ex.run(command_name="main",config_updates=main_init_configs)
+        if conf_inference == True:
+            result = ets_bert_ex.run(command_name="inference",config_updates=main_init_configs)
+        else:
+            result = ets_bert_ex.run(command_name="main",config_updates=main_init_configs)
 
     #must use seed for the main exp
 

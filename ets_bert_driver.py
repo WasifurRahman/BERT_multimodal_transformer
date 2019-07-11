@@ -369,6 +369,127 @@ class ETSDataset(Dataset):
                 
         # return X,X_word_pos,X_sentence_pos,Y
     
+class InferETSDataset(Dataset):
+    
+    def __init__(self,id_list,_config,all_data,tokenizer):
+        self.id_list = id_list
+        self.config=_config
+        self.tokenizer = tokenizer
+        data_path = _config["dataset_location"]
+            
+        (self.word_aligned_facet_sdk,self.word_aligned_covarep_sdk,self.word_embedding_idx_sdk,self.y_labels,self.id_2_word) = all_data
+
+        
+        self.glove_d = 1
+        self.covarep_d=81
+        self.facet_d=35
+        self.tot_feat_d = self.glove_d+self.covarep_d+self.facet_d
+
+        self.max_video_len=_config["max_num_sentences"]
+        self.max_sen_len=_config["max_seq_length"]
+    
+    def paded_word_idx(self,seq,max_sen_len=20,left_pad=1):
+        seq=seq[0:max_sen_len]
+        pad_w=np.concatenate((np.zeros(max_sen_len-len(seq)),seq),axis=0)
+        pad_w=np.array([[w_id] for  w_id in pad_w])
+        return pad_w
+
+    def padded_covarep_features(self,seq,max_sen_len=20,left_pad=1):
+        seq=seq[0:max_sen_len]
+        return np.concatenate((np.zeros((max_sen_len-len(seq),self.covarep_d)),seq),axis=0)
+
+    def padded_facet_features(self,seq,max_sen_len=20,left_pad=1):
+        seq=seq[0:max_sen_len]
+        
+        #print("padded facet:",np.zeros(((max_sen_len-len(seq)),self.facet_d)).shape,np.array(seq).shape)
+        padding = np.zeros(((max_sen_len-len(seq)),self.facet_d))
+        #seq = np.array(seq)
+        #print("right before concat:",padding.shape,seq.shape)
+        
+        ret_val =  np.concatenate((padding,seq),axis=0)
+        #print("done:",ret_val.shape)
+        return ret_val
+
+    def padded_context_features(self,context_w,context_of,context_cvp,max_num_sentence,max_sen_len):
+        context_w=context_w[-max_num_sentence:]
+        context_of=context_of[-max_num_sentence:]
+        context_cvp=context_cvp[-max_num_sentence:]
+
+        padded_context=[]
+        for i in range(len(context_w)):
+            p_seq_w=self.paded_word_idx(context_w[i],max_sen_len)
+            p_seq_cvp=self.padded_covarep_features(context_cvp[i],max_sen_len)
+            #print("NOw processing:",np.array(context_of[i]).shape)
+            p_seq_of=self.padded_facet_features(context_of[i],max_sen_len)
+            #print("processed it")
+            padded_context.append(np.concatenate((p_seq_w,p_seq_cvp,p_seq_of),axis=1))
+            #print("and it")
+
+        pad_c_len=max_num_sentence-len(padded_context)
+        padded_context=np.array(padded_context)
+        
+        if not padded_context.any():
+            return np.zeros((max_num_sentence,max_sen_len,self.tot_feat_d))
+        #print("padded",padded_context.shape)
+        return np.concatenate((np.zeros((pad_c_len,max_sen_len,self.tot_feat_d)),padded_context),axis=0)
+    
+        
+    
+    def __len__(self):
+        return len(self.id_list)
+    
+    def process_a_video(self):
+        print("ok")
+        
+    def __getitem__(self,index):
+        
+            hid=self.id_list[index]
+            #print("The key is:",hid)
+            text=np.array(self.word_embedding_idx_sdk[hid]['features'])
+            visual=np.array(self.word_aligned_facet_sdk[hid]['features'])
+            acoustic=np.array(self.word_aligned_covarep_sdk[hid]['features'])
+            #print("checking 0 index:{0} and text len{1}:".format(self.id_2_word[0],text.shape))
+            #max_num_sentence
+            #if(text.shape[0] <)
+            label=torch.FloatTensor([self.y_labels["labels"][hid][self.config["target_label_index"]] - self.config["label_median"]])
+            data = (text,visual,acoustic,label,hid,self.id_2_word)
+            features,video_len = convert_examples_to_features(data, self.config["label_list"],self.config["max_seq_length"], self.tokenizer, self.config["output_mode"])
+            #print(features)
+            
+            #(words, visual, acoustic), label, segment
+            
+            all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
+            all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
+            all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
+            all_visual = torch.tensor([f.visual for f in features], dtype=torch.float)
+            all_acoustic = torch.tensor([f.acoustic for f in features], dtype=torch.float)
+    
+    #print("bert_ids:",all_input_ids)
+
+            if self.config["output_mode"] == "classification":
+                all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
+            elif self.config["output_mode"] == "regression":
+                all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.float)
+        
+            # dataset = TensorDataset(all_input_ids, all_visual,all_acoustic,all_input_mask, all_segment_ids, all_label_ids)
+            #print("all_input_ids:{0}, all_visual:{1},all_acoustic:{2},all_input_mask:{3}, all_segment_ids:{4}, all_label_ids:{5},video_len:{6}".format(all_input_ids.shape, all_visual.shape,all_acoustic.shape,all_input_mask.shape, all_segment_ids.shape, all_label_ids.shape,np.array([video_len]).shape))
+            n_padding_rows = [self.config["max_num_sentences"] - all_input_ids.size()[0]]
+            
+            all_input_ids = torch.cat((all_input_ids, torch.zeros(n_padding_rows + list(all_input_ids.size()[1:]),dtype=all_input_ids.dtype)))
+            all_visual = torch.cat((all_visual, torch.zeros(n_padding_rows + list(all_visual.size()[1:]),dtype=all_visual.dtype)))
+            all_acoustic = torch.cat((all_acoustic, torch.zeros(n_padding_rows + list(all_acoustic.size()[1:]),dtype=all_acoustic.dtype)))
+            all_input_mask = torch.cat((all_input_mask, torch.zeros(n_padding_rows + list(all_input_mask.size()[1:]),dtype=all_input_mask.dtype)))
+            all_segment_ids = torch.cat((all_segment_ids, torch.zeros(n_padding_rows + list(all_segment_ids.size()[1:]),dtype=all_segment_ids.dtype)))
+            #not sending it
+            #all_label_ids = torch.cat((all_label_ids, torch.zeros(n_padding_rows + list(all_label_ids.size()[1:]),dtype=all_label_ids.dtype)))
+
+            
+            #print(all_input_ids.size())
+            #We are not sending all_label_ids
+            return all_input_ids, all_visual,all_acoustic,all_input_mask, all_segment_ids, label,torch.tensor([video_len]),torch.tensor([index])
+        
+       
+    
 class InputFeatures(object):
     """A single set of features of data."""
 
@@ -399,9 +520,10 @@ def cnf():
     do_lower_case=True
     cache_dir=None
     max_seq_length=128
-    train_batch_size=32
+    train_batch_size=4
+    inference_batch_size=1
     learning_rate=5e-5
-    num_train_epochs=20.0
+    num_train_epochs=50.0
     seed=None
     output_dir = None
     server_ip = None
@@ -423,7 +545,7 @@ def cnf():
     test_batch_size=None
     shuffle=True
     num_workers=2
-    best_model_path =  "/scratch/echowdh2/saved_models_from_projects/bert_transformer/"+str(node_index) +"_best_model.chkpt"
+    best_model_path =  "/scratch/echowdh2/saved_models_from_projects/bert_transformer/"+str(node_index) +"ets_best_model.chkpt"
     loss_function="ll1"
     save_model=True
     save_mode='best'
@@ -438,9 +560,9 @@ def cnf():
     if prototype:
         num_train_epochs=1
         train_batch_size=2
-    prot_train=400
-    prot_dev=200
-    prot_test=200
+    prot_train=6
+    prot_dev=6
+    prot_test=6
     
     d_acoustic_in=0
     d_visual_in = 0
@@ -449,6 +571,8 @@ def cnf():
     h_merge_sent = 0
     
     label_median=5.6
+    
+    infer_filter_dict = [[1,1,1],[1,1,0],[1,0,1],[1,0,0],[0,1,1],[0,1,0],[0,0,1],[0,0,0]]
         
     
 
@@ -869,13 +993,13 @@ def set_up_data_loader(_config):
     tokenizer = BertTokenizer.from_pretrained(_config["bert_model"], do_lower_case=_config["do_lower_case"])
 
     
-    # training_set = ETSDataset(train,_config,all_data,tokenizer)
-    # dev_set = ETSDataset(dev,_config,all_data,tokenizer)
-    # test_set = ETSDataset(test,_config,all_data,tokenizer)
+    training_set = ETSDataset(train,_config,all_data,tokenizer)
+    dev_set = ETSDataset(dev,_config,all_data,tokenizer)
+    test_set = ETSDataset(test,_config,all_data,tokenizer)
     
-    training_set = ETS_Concat_Dataset(train,_config,all_data,tokenizer)
-    dev_set = ETS_Concat_Dataset(dev,_config,all_data,tokenizer)
-    test_set = ETS_Concat_Dataset(test,_config,all_data,tokenizer)
+    # training_set = ETS_Concat_Dataset(train,_config,all_data,tokenizer)
+    # dev_set = ETS_Concat_Dataset(dev,_config,all_data,tokenizer)
+    # test_set = ETS_Concat_Dataset(test,_config,all_data,tokenizer)
 
     
     #print("dataset init")
@@ -914,7 +1038,19 @@ def set_up_data_loader(_config):
 
 
 
+@ets_bert_ex.capture
+def reload_model_from_file(file_path):
+        checkpoint = torch.load(file_path)
+        _config = checkpoint['_config']
+        
+        model = ETSBertForSequenceClassification.multimodal_from_pretrained(_config["bert_model"],newly_added_config = _config,
+              cache_dir=_config["cache_dir"],
+              num_labels=_config["num_labels"])
+        model.load_state_dict(checkpoint['model'])
+        model.to(_config["device"])
+        print('[Info] Trained model state loaded.')
 
+        return model
 
 @ets_bert_ex.capture
 def set_random_seed(seed):
@@ -933,12 +1069,12 @@ def prep_for_training(num_train_optimization_steps,_config):
 
 
     # TODO:Change model here
-    # model = ETSBertForSequenceClassification.multimodal_from_pretrained(_config["bert_model"],newly_added_config = _config,
-    #           cache_dir=_config["cache_dir"],
-    #           num_labels=_config["num_labels"])
-    model = MultimodalBertForSequenceClassification.multimodal_from_pretrained(_config["bert_model"],newly_added_config = _config,
+    model = ETSBertForSequenceClassification.multimodal_from_pretrained(_config["bert_model"],newly_added_config = _config,
               cache_dir=_config["cache_dir"],
               num_labels=_config["num_labels"])
+    # model = MultimodalBertForSequenceClassification.multimodal_from_pretrained(_config["bert_model"],newly_added_config = _config,
+    #           cache_dir=_config["cache_dir"],
+    #           num_labels=_config["num_labels"])
    
     model.to(_config["device"])
    
@@ -1112,6 +1248,128 @@ def test_epoch(model,data_loader,_config):
             # returned_predictions = predictions.squeeze(1).cpu().data.numpy()
 
     return preds,all_labels  
+
+@ets_bert_ex.capture
+def expand_batch(batch,_config):
+    #We are doing 4 variants at this moment
+
+    input_ids, visual,acoustic,input_mask, segment_ids, label_ids,video_lens,video_id = batch
+    new_batch = []
+    #print(input_ids,input_mask,segment_ids)
+    #assert False
+    
+    for criteria in _config["infer_filter_dict"]:
+        t_bit,a_bit,v_bit = criteria
+        print(t_bit,a_bit,v_bit)
+        
+        if(t_bit==0):
+            temp_input_ids= torch.zeros_like(input_ids)
+            temp_input_mask= torch.zeros_like(input_mask)
+        else:
+            temp_input_ids= torch.tensor(input_ids)
+            temp_input_mask= torch.tensor(input_mask)
+            
+        
+        if(a_bit==0):
+            temp_acoustic = torch.zeros_like(acoustic)
+        else:
+            temp_acoustic = torch.tensor(acoustic)
+            
+        if(v_bit==0):
+            temp_visual = torch.zeros_like(visual)
+        else:
+            temp_visual = torch.tensor(visual)
+        
+        new_batch.append(tuple([temp_input_ids, temp_visual,temp_acoustic,temp_input_mask, segment_ids, label_ids,video_lens,video_id]))
+    return new_batch
+            
+        
+        
+@ets_bert_ex.capture
+def infer_epoch(model,data_loader,all_data_point,_config):
+    ''' Epoch operation in evaluation phase '''
+   
+            
+    # epoch_loss = 0.0
+    # num_batches=0
+    model.eval()
+    # returned_Y = None
+    # returned_predictions = None
+    eval_loss=0.0
+    nb_eval_steps=0
+    preds=[]
+    all_labels=[]
+    
+    with torch.no_grad():
+   
+        for batch in tqdm(data_loader, mininterval=2,desc='  - (Validation)   ', leave=False):
+            #Each batch has only one video
+            batch = tuple(torch.squeeze(t) for t in batch)
+            
+            #Just expanded the batches to block input channels properly
+            batches = expand_batch(batch)
+            
+            for batch in batches:
+                
+                batch = tuple(t.to(_config["device"]) for t in batch)
+                batch = tuple(torch.unsqueeze(t,0) for t in batch)
+
+                input_ids, visual,acoustic,input_mask, segment_ids, label_ids,video_lens,video_id = batch
+                #print(input_ids)
+                #print(input_ids.size(),visual.size(),acoustic.size(),input_mask.size(), segment_ids.size(), label_ids.size(),video_lens.size(),video_id.size())
+                logits = model(input_ids, visual,acoustic,segment_ids, input_mask, labels=None)
+                
+                print(logits)
+            assert False
+            
+            
+            
+            #visual = torch.squeeze(visual,1)
+            #acoustic = torch.squeeze(acoustic,1)
+            #print("visual:",visual.shape," acoustic:",acoustic.shape," video_lens:",video_lens.shape)
+            # define a new function to compute loss values for both output_modes
+           
+            
+            # # create eval loss and other metric required by the task
+            # if _config["output_mode"] == "classification":
+            #     loss_fct = CrossEntropyLoss()
+            #     tmp_eval_loss = loss_fct(logits.view(-1, num_labels), label_ids.view(-1))
+            # elif _config["output_mode"] == "regression":
+            #     loss_fct = MSELoss()
+            #     tmp_eval_loss = loss_fct(logits.view(-1), label_ids.view(-1))
+            
+            # eval_loss += tmp_eval_loss.mean().item()
+            # nb_eval_steps += 1
+            # if len(preds) == 0:
+            #     preds.append(logits.detach().cpu().numpy())
+            #     all_labels.append(label_ids.detach().cpu().numpy())
+            # else:
+            #     preds[0] = np.append(
+            #         preds[0], logits.detach().cpu().numpy(), axis=0)
+            #     all_labels[0] = np.append(
+            #         all_labels[0], label_ids.detach().cpu().numpy(), axis=0)
+        assert False
+        eval_loss = eval_loss / nb_eval_steps
+        preds = preds[0]
+        all_labels=all_labels[0]
+        if _config["output_mode"] == "classification":
+            preds = np.argmax(preds, axis=1)
+        elif _config["output_mode"] == "regression":
+            preds = np.squeeze(preds)
+            all_labels=np.squeeze(all_labels)
+         
+          
+            # loss = criterion(predictions, Y)
+            
+            # epoch_loss += loss.item()
+            
+            # num_batches +=1
+            # #if we don'e do the squeeze, it remains as 2d numpy arraya nd hence
+            # #creates problems like nan while computing various statistics on them
+            # returned_Y = Y.squeeze(1).cpu().numpy()
+            # returned_predictions = predictions.squeeze(1).cpu().data.numpy()
+
+    return preds,all_labels  
    
 @ets_bert_ex.capture
 def test_score_model(model,test_data_loader,_config,_run):
@@ -1204,6 +1462,22 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
                     
     #After the entire training is over, save the best model as artifact in the mongodb
     
+@ets_bert_ex.capture
+def test_score_from_file(test_data_loader,_config,_run):
+    model_path =  _config["best_model_path"]
+    model = reload_model_from_file(model_path)
+    
+    return test_score_model(model,test_data_loader)
+
+@ets_bert_ex.capture
+def infer_data_from_model_file(infer_data_loader,all_data_point,_config,_run):
+    model_path =  _config["best_model_path"]
+    model = reload_model_from_file(model_path)
+    infer_epoch(model,infer_data_loader,all_data_point)
+    
+    #return test_score_model(model,test_data_loader)
+
+    
     
 @ets_bert_ex.automain
 def main(_config):
@@ -1218,10 +1492,72 @@ def main(_config):
     #assert False
 
     #TODO:need to fix it
-    # test_accuracy = test_score(test_data_loader,criterion)
-    # ex.log_scalar("test.accuracy",test_accuracy)
-    # results = dict()
-    # #I believe that it will try to minimize the rest. Let's see how it plays out
-    # results["optimization_target"] = 1 - test_accuracy
+    test_accuracy = test_score_from_file(test_data_loader)
+    ets_bert_ex.log_scalar("test.accuracy",test_accuracy)
+    results = dict()
+    #I believe that it will try to minimize the rest. Let's see how it plays out
+    results["optimization_target"] = 1 - test_accuracy
 
     #return results
+
+@ets_bert_ex.capture
+def infer_set_up_data_loader(_config):
+    dataset_id_file= os.path.join(_config["dataset_location"], "revised_id_list.pkl")
+    dataset_id=load_pickle(dataset_id_file)
+    train=dataset_id['train']
+    dev=dataset_id['dev']
+    test=dataset_id['test']
+    all_data_point = train + dev + test
+    #print(all_data_point)
+    
+    #print("real sizes:",len(train),len(dev),len(test))
+    if(_config["prototype"]):
+        train_num = _config["prot_train"]
+        all_data_point =all_data_point[:train_num]
+       
+    
+    data_path = _config["dataset_location"]    
+    facet_file= os.path.join(data_path,'revised_facet.pkl')
+    covarep_file=os.path.join(data_path,"covarep.pkl")
+    word_vec_file=os.path.join(data_path,"glove_index.pkl")
+    y_labels = os.path.join(data_path,"video_labels.pkl")
+    id_2_word_file =  os.path.join(data_path,"ets_word_list.pkl")
+        
+    word_aligned_facet_sdk=load_pickle(facet_file)
+    word_aligned_covarep_sdk=load_pickle(covarep_file)
+    word_embedding_idx_sdk=load_pickle(word_vec_file)
+    y_labels_sdk = load_pickle(y_labels)
+    id_2_word = load_pickle(id_2_word_file)['data']
+    #print(id_2_word)
+    all_data = (word_aligned_facet_sdk,word_aligned_covarep_sdk,word_embedding_idx_sdk,y_labels_sdk,id_2_word)
+    tokenizer = BertTokenizer.from_pretrained(_config["bert_model"], do_lower_case=_config["do_lower_case"])
+
+    
+    inference_set = InferETSDataset(all_data_point,_config,all_data,tokenizer)
+    
+    
+    #print("dataset init")
+    #print("In train dataloader:",_config["train_batch_size"])
+    inference_dataloader = DataLoader(inference_set, batch_size=_config["inference_batch_size"],
+                        shuffle= False, num_workers=_config["num_workers"])
+    
+    #Although insignificant, just keeping it for keeping the code smooth
+    num_train_optimization_steps = int(len(inference_set) / _config["train_batch_size"] / _config["gradient_accumulation_steps"]) * _config["num_train_epochs"]
+    
+    #print("num_t:{0}".format(num_train_optimization_steps))
+
+    
+    #print("data loader prepared")
+    #my_logger.debug(train_X.shape,train_Y.shape,dev_X.shape,dev_Y.shape,test_X.shape,test_Y.shape)
+    #data_loader = test_data_loader(train_X,train_Y,_config)
+    return inference_dataloader ,all_data_point
+    
+   
+
+
+@ets_bert_ex.command
+def inference(_config):
+    inference_dataloader ,all_data_point = infer_set_up_data_loader()
+    #model,optimizer,tokenizer = prep_for_training(num_train_optimization_steps)
+    infer_data_from_model_file(inference_dataloader,all_data_point)
+    

@@ -1133,6 +1133,7 @@ class ETSBertModel(BertPreTrainedModel):
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
         embedding_output = self.embeddings(input_ids, token_type_ids)
+        #assert False
         #print("embedding_out:",embedding_output.size(), "acoustic:",acoustic.size()," visual:",visual.size())
         #print("The newly config:",self.newly_added_config)
         embedding_output = self.map_audio_visual(embedding_output,acoustic,visual)
@@ -1489,7 +1490,9 @@ class ETSBertForSequenceClassification(BertPreTrainedModel):
         
         (input_ids,visual,acoustic,token_type_ids, attention_mask) = tuple(torch.reshape(t,tuple([t.shape[0]*t.shape[1]])+ tuple(t.size()[2:])) for t in (input_ids,visual,acoustic,token_type_ids, attention_mask))
         
-        #print("input_ids:{0},visual:{1},acoustic:{2},token_type:{3},attention_mask:{4}".format(input_ids.size(),visual.size(),acoustic.size(),token_type_ids.size(),attention_mask.size()))
+        visual = torch.squeeze(visual,1)
+        acoustic = torch.squeeze(acoustic,1)
+        #print("In model: input_ids:{0},visual:{1},acoustic:{2},token_type:{3},attention_mask:{4}".format(input_ids.size(),visual.size(),acoustic.size(),token_type_ids.size(),attention_mask.size()))
 
         
        
@@ -1501,12 +1504,15 @@ class ETSBertForSequenceClassification(BertPreTrainedModel):
         #print("bert encoder output:{0},{1}".format(pooled_output,pooled_output.size()))
         pooled_output[torch.isnan(pooled_output)]=0
         
+    
+        
         #The next part is just linear mapping
         sent_scores = self.sent_classifier(pooled_output).squeeze(-1)
         #print("sent scores shape:{0}".format(sent_scores.size()))
         logits = self.classifier(sent_scores)
         
         
+        #assert False
         #we tried to do an lstm modelling here but failed
         # h = torch.zeros(pooled_output.shape[0],\
         #                 self.newly_added_config['h_merge_sent']).unsqueeze(0).to(self.newly_added_config["device"])
