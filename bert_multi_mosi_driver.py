@@ -44,7 +44,7 @@ from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef
 
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE, WEIGHTS_NAME, CONFIG_NAME
-from pytorch_pretrained_bert.modeling import BertForSequenceClassification, BertConfig,MultimodalBertForSequenceClassification
+from pytorch_pretrained_bert.modeling import BertForSequenceClassification, BertConfig,MultimodalBertForSequenceClassification,MultimodalBertForEncoding
 #from pytorch_pretrained_bert.tokenization import BertTokenizer
 #We are using the tokenization that amir did
 from pytorch_pretrained_bert.amir_tokenization import BertTokenizer
@@ -372,9 +372,9 @@ def set_up_data_loader(_config):
     test_data=all_data["test"]
     
     if(_config["prototype"]):
-        train_data=train_data[:100]
-        dev_data=dev_data[:100]
-        test_data=test_data[:100]     
+        train_data=train_data[:-1]
+        dev_data=dev_data[:-1]
+        test_data=test_data[:-1]     
     
     
     tokenizer = BertTokenizer.from_pretrained(_config["bert_model"], do_lower_case=_config["do_lower_case"])
@@ -419,6 +419,35 @@ def set_random_seed(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
+    
+
+@bert_multi_ex.capture
+def prep_for_storing_bert_enc(num_train_optimization_steps,_config):
+    tokenizer = BertTokenizer.from_pretrained(_config["bert_model"], do_lower_case=_config["do_lower_case"])
+
+
+    # TODO:Change model here
+    model = MultimodalBertForEncoding.multimodal_from_pretrained(_config["bert_model"],newly_added_config = _config,
+              cache_dir=_config["cache_dir"],
+              num_labels=_config["num_labels"])
+   
+    model.to(_config["device"])
+   
+
+    # Prepare optimizer
+    param_optimizer = list(model.named_parameters())
+    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
+    optimizer_grouped_parameters = [
+        {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
+        {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+        ]
+    
+    optimizer = BertAdam(optimizer_grouped_parameters,
+                         lr=_config["learning_rate"],
+                         warmup=_config["warmup_proportion"],
+                         t_total=num_train_optimization_steps)
+    
+    return model,optimizer,tokenizer
 
 @bert_multi_ex.capture
 def prep_for_training(num_train_optimization_steps,_config):
@@ -631,6 +660,46 @@ def test_score_model(model,test_data_loader,_config,_run):
              "mult_f_score":f_score,"Confusion Matrix":confusion_matrix_result,
              "Classification Report":classification_report_score}
     return accuracy
+
+@bert_multi_ex.capture
+def encode_one_loader(model,dataloader,name,_config):
+    model.eval()
+    X = None
+    Y=None
+    with torch.no_grad():
+        for step, batch in enumerate(tqdm(dataloader, desc="Iteration")):
+            batch = tuple(t.to(_config["device"]) for t in batch)
+
+            input_ids, visual,acoustic,input_mask, segment_ids, label_ids = batch
+            visual = torch.squeeze(visual,1)
+            acoustic = torch.squeeze(acoustic,1)
+            
+            visual = visual[:,1:,:]
+            acoustic = acoustic[:,1:,:]
+            text_encoding = model(input_ids,segment_ids, input_mask, labels=None)
+            batch_data =torch.cat((text_encoding,acoustic,visual),dim=2)
+            
+            X = torch.cat((X,batch_data),dim=0) if X is not None else batch_data
+            Y = torch.cat((Y,label_ids),dim=0) if Y is not None else label_ids
+            #print(text_encoding.size(),acoustic.size(),visual.size())
+    X = X.cpu().numpy()
+    Y = Y.cpu().numpy()
+    #print(X.shape,Y.shape)
+    return X,Y
+
+    
+
+@bert_multi_ex.capture
+def get_encoding(model, train_dataloader, validation_dataloader,test_data_loader,optimizer,_config,_run):
+    
+    X_train,y_train = encode_one_loader(model,train_dataloader,'train')
+    X_valid,y_valid = encode_one_loader(model,validation_dataloader,'valid')
+    X_test,y_test = encode_one_loader(model,test_data_loader,'test')
+    print(X_train.shape,y_train.shape,X_valid.shape,y_valid.shape,X_test.shape,y_test.shape)
+    all_data = {'X_train':X_train,'y_train':y_train,'X_valid':X_valid,'y_valid':y_valid,'X_test':X_test,'y_test':y_test}
+    return all_data
+    
+    
             
 @bert_multi_ex.capture
 def train(model, train_dataloader, validation_dataloader,test_data_loader,optimizer,_config,_run):
@@ -676,7 +745,24 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
                     test_accuracy = test_score_model(model,test_data_loader)
                     _run.log_scalar("test_per_epoch.acc", test_accuracy, epoch_i)
     #After the entire training is over, save the best model as artifact in the mongodb
+
+@bert_multi_ex.command
+def extract_bert_embedding_for_mosi(_config):
     
+    set_random_seed(_config["seed"])
+    #print(_config["rand_test"],_config["seed"])
+    train_data_loader,dev_data_loader,test_data_loader,num_train_optimization_steps = set_up_data_loader()
+    
+    model,optimizer,tokenizer = prep_for_storing_bert_enc(num_train_optimization_steps)
+    
+
+
+    all_data = get_encoding(model, train_data_loader,dev_data_loader,test_data_loader,optimizer)  
+    
+    output = open('bert_mosi.pkl', 'wb')
+    pickle.dump(all_data, output)
+    output.close()
+
     
 @bert_multi_ex.automain
 def main(_config):
