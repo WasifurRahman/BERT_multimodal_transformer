@@ -755,7 +755,7 @@ class BertPreTrainedModel(nn.Module):
                                model.__class__.__name__, "\n\t".join(error_msgs)))
         return model
     @classmethod
-    def multimodal_from_pretrained(cls, pretrained_model_name_or_path, newly_added_config=None,*inputs, **kwargs):
+    def multimodal_from_pretrained(cls, pretrained_model_name_or_path, newly_added_config=None, return_pre_trained=True,*inputs, **kwargs):
         """
         Instantiate a BertPreTrainedModel from a pre-trained model file or a pytorch state dict.
         Download and cache the pre-trained model file if needed.
@@ -830,6 +830,12 @@ class BertPreTrainedModel(nn.Module):
         logger.info("Model config {}".format(config))
         # Instantiate model.
         model = cls(config,newly_added_config, *inputs, **kwargs)
+        
+        if return_pre_trained == False:
+            return model
+        
+        assert False
+        
         if state_dict is None and not from_tf:
             weights_path = os.path.join(serialization_dir, WEIGHTS_NAME)
             state_dict = torch.load(weights_path, map_location='cpu')

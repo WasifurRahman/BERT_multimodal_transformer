@@ -47,7 +47,7 @@ else:
 #So, we are assuming that there will a folder called /processed_multimodal_data in the parent folder
 #of this code. I wanted to keep it inside the .git folder. But git push limits file size to be <=100MB
 #and some data files exceeds that size.
-all_datasets_location = "/scratch/mhasan8/processed_multimodal_data"
+#all_datasets_location = "/scratch/mhasan8/processed_multimodal_data"
 
 @skeleton_ex.config
 def sk_config():
@@ -62,8 +62,8 @@ def initiate_main_experiment(_config):
 
                               "prototype":conf_prototype,'dataset_location':dataset_location,"dataset_name":dataset_name}
     
-    GLUE_DIR="/scratch/mhasan8/processed_multimodal_data/"
-    CACHE_DIR="/scratch/mhasan8/processed_multimodal_data/MRPC/model_cache"
+    GLUE_DIR=all_datasets_location
+    CACHE_DIR=all_datasets_location + "/MRPC/model_cache"
     TASK_NAME=dataset_name
     main_init_configs["task_name"] = TASK_NAME
     main_init_configs["do_train"]  = True
@@ -73,7 +73,7 @@ def initiate_main_experiment(_config):
     main_init_configs["cache_dir"] = CACHE_DIR 
     main_init_configs["bert_model"] = "bert-base-uncased"
     main_init_configs["max_seq_length"]  = 35 #TODO:May be shortened
-    main_init_configs["train_batch_size"] =  32 
+    main_init_configs["train_batch_size"] =  32
     main_init_configs["learning_rate"]  = np.random.choice([2e-5,2e-6,2e-4]) 
     main_init_configs["h_merge_sent"] = 768
     main_init_configs["acoustic_in_dim"] = 74

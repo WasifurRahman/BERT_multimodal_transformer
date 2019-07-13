@@ -16,6 +16,8 @@ import os
 import random
 import pickle
 import sys
+from global_configs import *
+
 sys.path.insert(0,'./pytorch-pretrained-BERT')
 # from mosi_dataset_constants import SDK_PATH, DATA_PATH, WORD_EMB_PATH, CACHE_PATH
 # import sys
@@ -137,7 +139,7 @@ def cnf():
     test_batch_size=None
     shuffle=True
     num_workers=2
-    best_model_path =  "/scratch/mhasan8/saved_models_from_projects/bert_transformer/"+str(node_index) +"_best_model.chkpt"
+    best_model_path =  model_saving_head +str(node_index) +"_best_model.chkpt"
     loss_function="ll1"
     save_model=True
     save_mode='best'
@@ -432,9 +434,11 @@ def prep_for_training(num_train_optimization_steps,_config):
 
 
     # TODO:Change model here
-    model = MultimodalBertForSequenceClassification.multimodal_from_pretrained(_config["bert_model"],newly_added_config = _config,
+    model = MultimodalBertForSequenceClassification.multimodal_from_pretrained(_config["bert_model"],newly_added_config = _config,return_pre_trained=False,
               cache_dir=_config["cache_dir"],
               num_labels=_config["num_labels"])
+    # model = MultimodalBertForSequenceClassification(_config["bert_model"],newly_added_config = _config,
+    #           num_labels=_config["num_labels"])
    
     model.to(_config["device"])
    
