@@ -1391,7 +1391,7 @@ class MultimodalBertForSequenceClassification(BertPreTrainedModel):
         self.newly_added_config = newly_added_config
         self.bert = MultimodalBertModel(config,newly_added_config)
         self.dropout = nn.Dropout(newly_added_config["hidden_dropout_prob"])
-        self.summary_audio_visual = Summary_AV(config,newly_added_config)
+        #self.summary_audio_visual = Summary_AV(config,newly_added_config)
 
         self.classifier = nn.Linear(config.hidden_size, num_labels)
         #self.fc1 = nn.Linear(config.hidden_size + newly_added_config['h_audio_lstm'] + newly_added_config['h_video_lstm'], newly_added_config['fc1_out'])

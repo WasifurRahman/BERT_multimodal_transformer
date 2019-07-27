@@ -16,6 +16,8 @@ import os
 import random
 import pickle
 import sys
+from global_configs import *
+
 sys.path.insert(0,'./pytorch-pretrained-BERT')
 # from mosi_dataset_constants import SDK_PATH, DATA_PATH, WORD_EMB_PATH, CACHE_PATH
 # import sys
@@ -137,7 +139,7 @@ def cnf():
     test_batch_size=None
     shuffle=True
     num_workers=2
-    best_model_path =  "/scratch/mhasan8/saved_models_from_projects/bert_transformer/"+str(node_index) +"_best_model.chkpt"
+    best_model_path =  our_model_saving_path +str(node_index) +"_best_model.chkpt"
     loss_function="ll1"
     save_model=True
     save_mode='best'
@@ -392,6 +394,7 @@ def set_up_data_loader(_config):
     
     #print("train_dataset:",train_dataset)
     #print(len(train_dataset),_config["train_batch_size"],_config["gradient_accumulation_steps"], _config["num_train_epochs"])
+    #WE may use it for ETS
     num_train_optimization_steps = int(len(train_dataset) / _config["train_batch_size"] / _config["gradient_accumulation_steps"]) * _config["num_train_epochs"]
     #print("num_tr_opt_st:",num_train_optimization_steps)
     

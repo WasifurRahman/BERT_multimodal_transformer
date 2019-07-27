@@ -26,6 +26,7 @@ parser=argparse.ArgumentParser()
 parser.add_argument('--dataset', help='the dataset you want to work on')
 
 dataset_specific_config = {
+        #For  mosi, input_modailities_size do not matter
         "mosi":{'input_modalities_sizes':[300,5,20],'output_mode':'regression','label_list':[None],'dev_batch_size':229,'test_batch_size':685,'d_acoustic_in':74,'d_visual_in':47},
         "ETS":{'input_modalities_sizes':[1,81,35],'output_mode':'regression','label_list':[None],'dev_batch_size':229,'test_batch_size':685,'d_acoustic_in':81,'d_visual_in':35,'max_num_sentences':20,'max_seq_length':30, 'Y_size':6,'target_label_index':0},
         "iemocap":{'text_indices':(0,300),'audio_indices':(300,374),'video_indices':(374,409),'max_seq_len':21},
@@ -47,7 +48,6 @@ else:
 #So, we are assuming that there will a folder called /processed_multimodal_data in the parent folder
 #of this code. I wanted to keep it inside the .git folder. But git push limits file size to be <=100MB
 #and some data files exceeds that size.
-all_datasets_location = "/scratch/mhasan8/processed_multimodal_data"
 
 @skeleton_ex.config
 def sk_config():
@@ -62,8 +62,8 @@ def initiate_main_experiment(_config):
 
                               "prototype":conf_prototype,'dataset_location':dataset_location,"dataset_name":dataset_name}
     
-    GLUE_DIR="/scratch/mhasan8/processed_multimodal_data/"
-    CACHE_DIR="/scratch/mhasan8/processed_multimodal_data/MRPC/model_cache"
+    GLUE_DIR="/scratch/mhasan8/processed_multimodal_data/"#do not bother, legacy code
+    
     TASK_NAME=dataset_name
     main_init_configs["task_name"] = TASK_NAME
     main_init_configs["do_train"]  = True
@@ -72,6 +72,9 @@ def initiate_main_experiment(_config):
     main_init_configs["data_dir"]  = GLUE_DIR + "/" +TASK_NAME 
     main_init_configs["cache_dir"] = CACHE_DIR 
     main_init_configs["bert_model"] = "bert-base-uncased"
+    
+    
+    #Relevant for us:Sangwu
     main_init_configs["max_seq_length"]  = 35 #TODO:May be shortened
     main_init_configs["train_batch_size"] =  32 
     main_init_configs["learning_rate"]  = np.random.choice([2e-5,2e-6,2e-4]) 
