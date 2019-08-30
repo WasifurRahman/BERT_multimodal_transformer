@@ -352,6 +352,127 @@ except (ImportError, AttributeError) as e:
             x = (x - u) / torch.sqrt(s + self.variance_epsilon)
             return self.weight * x + self.bias
 
+class  Summary_AV(nn.Module):
+    """Construct the embeddings from word, position and token_type embeddings.
+    """
+    def __init__(self, config,newly_added_config):
+        super(Summary_AV, self).__init__()
+        self.newly_added_config=newly_added_config
+        self.audio_LSTM = nn.LSTM(input_size = newly_added_config["d_acoustic_in"],\
+                                                       hidden_size = newly_added_config['h_audio_lstm'],batch_first=True)
+        self.video_LSTM = nn.LSTM(input_size = newly_added_config["d_visual_in"],\
+                                                       hidden_size = newly_added_config['h_video_lstm'],batch_first=True)
+
+
+
+
+
+    def forward(self, classification_embedding,acoustic,visual):
+
+        h_aud = torch.zeros(classification_embedding.shape[0],\
+                        self.newly_added_config['h_audio_lstm']).unsqueeze(0).to(self.newly_added_config["device"])
+        c_aud = torch.zeros(classification_embedding.shape[0],\
+                        self.newly_added_config['h_audio_lstm']).unsqueeze(0).to(self.newly_added_config["device"])
+
+        h_vid = torch.zeros(classification_embedding.shape[0],\
+                        self.newly_added_config['h_video_lstm']).unsqueeze(0).to(self.newly_added_config["device"])
+        c_vid = torch.zeros(classification_embedding.shape[0],\
+                        self.newly_added_config['h_video_lstm']).unsqueeze(0).to(self.newly_added_config["device"])
+
+        _,(h_aud_last,c_aud_last) = self.audio_LSTM(acoustic,(h_aud,c_aud))
+        #print("LSTM output:{0},{1}".format(h_last,h_last.size()))
+        h_aud_last = h_aud_last.squeeze(0)
+
+
+        _,(h_vid_last,c_vid_last) = self.video_LSTM(visual,(h_vid,c_vid))
+        #print("LSTM output:{0},{1}".format(h_last,h_last.size()))
+        h_vid_last = h_vid_last.squeeze(0)
+
+        mult_emb = torch.cat((h_aud_last,h_vid_last),dim=1)
+        # seq_length = input_ids.size(1)
+        # position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
+        # position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        # if token_type_ids is None:
+        #     token_type_ids = torch.zeros_like(input_ids)
+
+        # words_embeddings = self.word_embeddings(input_ids)
+        # position_embeddings = self.position_embeddings(position_ids)
+        # token_type_embeddings = self.token_type_embeddings(token_type_ids)
+
+        # embeddings = words_embeddings + position_embeddings + token_type_embeddings
+        # embeddings = self.LayerNorm(embeddings)
+        # embeddings = self.dropout(embeddings)
+
+        return mult_emb
+
+class  Audio_visual_mapper(nn.Module):
+    """Construct the embeddings from word, position and token_type embeddings.
+    """
+    def __init__(self, config,newly_added_config):
+        super(Audio_visual_mapper, self).__init__()
+
+        #multi gated shifting following raven paper
+        self.W_hv = nn.Linear(newly_added_config["d_visual_in"]+newly_added_config["h_merge_sent"],newly_added_config["h_merge_sent"])
+        self.W_ha = nn.Linear(newly_added_config["d_acoustic_in"]+newly_added_config["h_merge_sent"],newly_added_config["h_merge_sent"])
+
+        self.W_v = nn.Linear(newly_added_config["d_visual_in"],newly_added_config["h_merge_sent"])
+        self.W_a = nn.Linear(newly_added_config["d_acoustic_in"],newly_added_config["h_merge_sent"])
+        self.beta = newly_added_config["beta_shift"]
+        self.newly_added_config = newly_added_config
+
+        self.LayerNorm = XLNetLayerNorm(config.hidden_size, eps=1e-12)
+        self.final_dropout = nn.Dropout(newly_added_config["hidden_dropout_prob"])
+
+    def forward(self,text_embedding,acoustic,visual):
+        '''
+        print('----INSIDE MAPPER----')
+        print('text_embedding: ',text_embedding.shape)
+        print('visual: ',visual.shape)
+        print('acoustic: ',acoustic.shape)
+        '''
+
+        text_embedding = text_embedding.transpose(0, 1).contiguous()
+        acoustic = acoustic.transpose(0, 1).contiguous()
+        visual = visual.transpose(0, 1).contiguous()
+
+        '''
+        print('----Transpose----')
+        print('text_embedding: ',text_embedding.shape)
+        print('visual: ',visual.shape)
+        print('acoustic: ',acoustic.shape)
+        '''
+
+        weight_v= F.relu(self.W_hv(torch.cat((visual,text_embedding),dim=-1)))
+        weight_a= F.relu(self.W_ha(torch.cat((acoustic,text_embedding),dim=-1)))
+
+        #shift_vector
+        h_m = weight_v * self.W_v(visual) + weight_a * self.W_a(acoustic)
+
+        em_norm = text_embedding.norm(2,dim=-1)
+        hm_norm = h_m.norm(2,dim=-1)
+
+        hm_norm_ones=torch.ones(hm_norm.shape,requires_grad=True).to(self.newly_added_config["device"])
+        hm_norm=torch.where(hm_norm==0,hm_norm_ones,hm_norm)
+        #hm_norm[hm_norm==0.]=1.
+
+        thresh_hold = (em_norm/hm_norm)*self.beta
+
+        ones = torch.ones(thresh_hold.shape,requires_grad=True).to(self.newly_added_config["device"])
+
+        alpha = torch.min(thresh_hold,ones)
+        alpha=alpha.unsqueeze(dim=-1)
+
+        acoustic_vis_embedding = alpha*h_m
+
+        embedding_output = self.final_dropout(self.LayerNorm(acoustic_vis_embedding + text_embedding))
+
+        #print('----EMBEDDING OUTPUT----')
+        #print(embedding_output.shape)
+        embedding_output = embedding_output.transpose(0, 1).contiguous()
+        #print(embedding_output.shape)
+
+        return embedding_output
+
 class XLNetRelativeAttention(nn.Module):
     def __init__(self, config):
         super(XLNetRelativeAttention, self).__init__()
@@ -986,6 +1107,304 @@ class XLNetModel(XLNetPreTrainedModel):
 
         return outputs  # outputs, new_mems, (hidden_states), (attentions)
 
+class MultimodalXLNetModel(XLNetPreTrainedModel):
+    def __init__(self, config, newly_added_config):
+        super(MultimodalXLNetModel,self).__init__(config)
+        self.newly_added_config = newly_added_config
+        self.map_audio_visual = Audio_visual_mapper(config,newly_added_config)
+        self.map_all_audio_visual = nn.ModuleList([Audio_visual_mapper(config,newly_added_config) for _ in range(config.n_layer)])
+        self.output_attentions = config.output_attentions
+        self.output_hidden_states = config.output_hidden_states
+
+        self.mem_len = config.mem_len
+        self.reuse_len = config.reuse_len
+        self.d_model = config.d_model
+        self.same_length = config.same_length
+        self.attn_type = config.attn_type
+        self.bi_data = config.bi_data
+        self.clamp_len = config.clamp_len
+        self.n_layer = config.n_layer
+
+        self.word_embedding = nn.Embedding(config.n_token, config.d_model)
+        self.mask_emb = nn.Parameter(torch.FloatTensor(1, 1, config.d_model))
+        self.layer = nn.ModuleList([XLNetLayer(config) for _ in range(config.n_layer)])
+        self.dropout = nn.Dropout(config.dropout)
+
+        self.apply(self.init_weights)
+
+    def _resize_token_embeddings(self, new_num_tokens):
+        self.word_embedding = self._get_resized_embeddings(self.word_embedding, new_num_tokens)
+        return self.word_embedding
+
+    def _prune_heads(self, heads_to_prune):
+        raise NotImplementedError
+
+    def create_mask(self, qlen, mlen):
+        """
+        Creates causal attention mask. Float mask where 1.0 indicates masked, 0.0 indicates not-masked.
+
+        Args:
+            qlen: TODO Lysandre didn't fill
+            mlen: TODO Lysandre didn't fill
+
+        ::
+
+                  same_length=False:      same_length=True:
+                  <mlen > <  qlen >       <mlen > <  qlen >
+               ^ [0 0 0 0 0 1 1 1 1]     [0 0 0 0 0 1 1 1 1]
+                 [0 0 0 0 0 0 1 1 1]     [1 0 0 0 0 0 1 1 1]
+            qlen [0 0 0 0 0 0 0 1 1]     [1 1 0 0 0 0 0 1 1]
+                 [0 0 0 0 0 0 0 0 1]     [1 1 1 0 0 0 0 0 1]
+               v [0 0 0 0 0 0 0 0 0]     [1 1 1 1 0 0 0 0 0]
+
+        """
+        attn_mask = torch.ones([qlen, qlen])
+        mask_up = torch.triu(attn_mask, diagonal=1)
+        attn_mask_pad = torch.zeros([qlen, mlen])
+        ret = torch.cat([attn_mask_pad, mask_up], dim=1)
+        if self.same_length:
+            mask_lo = torch.tril(attn_mask, diagonal=-1)
+            ret = torch.cat([ret[:, :qlen] + mask_lo, ret[:, qlen:]], dim=1)
+
+        ret = ret.to(next(self.parameters()))
+        return ret
+
+    def cache_mem(self, curr_out, prev_mem):
+        """cache hidden states into memory."""
+        if self.mem_len is None or self.mem_len == 0:
+            return None
+        else:
+            if self.reuse_len is not None and self.reuse_len > 0:
+                curr_out = curr_out[:self.reuse_len]
+
+            if prev_mem is None:
+                new_mem = curr_out[-self.mem_len:]
+            else:
+                new_mem = torch.cat([prev_mem, curr_out], dim=0)[-self.mem_len:]
+
+        return new_mem.detach()
+
+    @staticmethod
+    def positional_embedding(pos_seq, inv_freq, bsz=None):
+        sinusoid_inp = torch.einsum('i,d->id', pos_seq, inv_freq)
+        pos_emb = torch.cat([torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)], dim=-1)
+        pos_emb = pos_emb[:, None, :]
+
+        if bsz is not None:
+            pos_emb = pos_emb.expand(-1, bsz, -1)
+
+        return pos_emb
+
+    def relative_positional_encoding(self, qlen, klen, bsz=None):
+        """create relative positional encoding."""
+        freq_seq = torch.arange(0, self.d_model, 2.0, dtype=torch.float)
+        inv_freq = 1 / torch.pow(10000, (freq_seq / self.d_model))
+
+        if self.attn_type == 'bi':
+            # beg, end = klen - 1, -qlen
+            beg, end = klen, -qlen
+        elif self.attn_type == 'uni':
+            # beg, end = klen - 1, -1
+            beg, end = klen, -1
+        else:
+            raise ValueError('Unknown `attn_type` {}.'.format(self.attn_type))
+
+        if self.bi_data:
+            fwd_pos_seq = torch.arange(beg, end, -1.0, dtype=torch.float)
+            bwd_pos_seq = torch.arange(-beg, -end, 1.0, dtype=torch.float)
+
+            if self.clamp_len > 0:
+                fwd_pos_seq = fwd_pos_seq.clamp(-self.clamp_len, self.clamp_len)
+                bwd_pos_seq = bwd_pos_seq.clamp(-self.clamp_len, self.clamp_len)
+
+            if bsz is not None:
+                fwd_pos_emb = self.positional_embedding(fwd_pos_seq, inv_freq, bsz//2)
+                bwd_pos_emb = self.positional_embedding(bwd_pos_seq, inv_freq, bsz//2)
+            else:
+                fwd_pos_emb = self.positional_embedding(fwd_pos_seq, inv_freq)
+                bwd_pos_emb = self.positional_embedding(bwd_pos_seq, inv_freq)
+
+            pos_emb = torch.cat([fwd_pos_emb, bwd_pos_emb], dim=1)
+        else:
+            fwd_pos_seq = torch.arange(beg, end, -1.0)
+            if self.clamp_len > 0:
+                fwd_pos_seq = fwd_pos_seq.clamp(-self.clamp_len, self.clamp_len)
+            pos_emb = self.positional_embedding(fwd_pos_seq, inv_freq, bsz)
+
+        pos_emb = pos_emb.to(next(self.parameters()))
+        return pos_emb
+
+    def forward(self, input_ids, visual, acoustic, token_type_ids=None, input_mask=None, attention_mask=None,
+                mems=None, perm_mask=None, target_mapping=None, head_mask=None):
+        # the original code for XLNet uses shapes [len, bsz] with the batch dimension at the end
+        # but we want a unified interface in the library with the batch size on the first dimension
+        # so we move here the first dimension (batch) to the end
+        '''
+        print('----INISDE MODEL----')
+        print('input_ids: ',input_ids.shape)
+        print('visual: ',visual.shape)
+        print('acoustic: ',acoustic.shape)
+        '''
+
+        input_ids = input_ids.transpose(0, 1).contiguous()
+        visual = visual.transpose(0, 1).contiguous()
+        acoustic = acoustic.transpose(0, 1).contiguous()
+        token_type_ids = token_type_ids.transpose(0, 1).contiguous() if token_type_ids is not None else None
+        input_mask = input_mask.transpose(0, 1).contiguous() if input_mask is not None else None
+        attention_mask = attention_mask.transpose(0, 1).contiguous() if attention_mask is not None else None
+        perm_mask = perm_mask.permute(1, 2, 0).contiguous() if perm_mask is not None else None
+        target_mapping = target_mapping.permute(1, 2, 0).contiguous() if target_mapping is not None else None
+
+        '''
+        print('----AFTER TRANSPOSE----')
+        print('input_ids: ',input_ids.shape)
+        print('visual: ',visual.shape)
+        print('acoustic: ',acoustic.shape)
+        '''
+
+        qlen, bsz = input_ids.shape[0], input_ids.shape[1]
+        mlen = mems[0].shape[0] if mems is not None else 0
+        klen = mlen + qlen
+
+        dtype_float = next(self.parameters()).dtype
+        device = next(self.parameters()).device
+
+        ##### Attention mask
+        # causal attention mask
+        if self.attn_type == 'uni':
+            attn_mask = self.create_mask(qlen, mlen)
+            attn_mask = attn_mask[:, :, None, None]
+        elif self.attn_type == 'bi':
+            attn_mask = None
+        else:
+            raise ValueError('Unsupported attention type: {}'.format(self.attn_type))
+
+        # data mask: input mask & perm mask
+        assert input_mask is None or attention_mask is None, "You can only use one of input_mask (uses 1 for padding) "
+        "or attention_mask (uses 0 for padding, added for compatbility with BERT). Please choose one."
+        if input_mask is None and attention_mask is not None:
+            input_mask = 1.0 - attention_mask
+        if input_mask is not None and perm_mask is not None:
+            data_mask = input_mask[None] + perm_mask
+        elif input_mask is not None and perm_mask is None:
+            data_mask = input_mask[None]
+        elif input_mask is None and perm_mask is not None:
+            data_mask = perm_mask
+        else:
+            data_mask = None
+
+        if data_mask is not None:
+            # all mems can be attended to
+            mems_mask = torch.zeros([data_mask.shape[0], mlen, bsz]).to(data_mask)
+            data_mask = torch.cat([mems_mask, data_mask], dim=1)
+            if attn_mask is None:
+                attn_mask = data_mask[:, :, :, None]
+            else:
+                attn_mask += data_mask[:, :, :, None]
+
+        if attn_mask is not None:
+            attn_mask = (attn_mask > 0).to(dtype_float)
+
+        if attn_mask is not None:
+            non_tgt_mask = -torch.eye(qlen).to(attn_mask)
+            non_tgt_mask = torch.cat([torch.zeros([qlen, mlen]).to(attn_mask), non_tgt_mask], dim=-1)
+            non_tgt_mask = ((attn_mask + non_tgt_mask[:, :, None, None]) > 0).to(attn_mask)
+        else:
+            non_tgt_mask = None
+
+        ##### Word embeddings and prepare h & g hidden states
+
+        word_emb_k = self.word_embedding(input_ids)
+
+        # Multimodal Modification
+        #word_emb_k = self.map_audio_visual(word_emb_k,acoustic,visual)
+
+        output_h = self.dropout(word_emb_k)
+        if target_mapping is not None:
+            word_emb_q = self.mask_emb.expand(target_mapping.shape[0], bsz, -1)
+        # else:  # We removed the inp_q input which was same as target mapping
+        #     inp_q_ext = inp_q[:, :, None]
+        #     word_emb_q = inp_q_ext * self.mask_emb + (1 - inp_q_ext) * word_emb_k
+            output_g = self.dropout(word_emb_q)
+        else:
+            output_g = None
+
+        ##### Segment embedding
+        if token_type_ids is not None:
+            # Convert `token_type_ids` to one-hot `seg_mat`
+            mem_pad = torch.zeros([mlen, bsz], dtype=torch.long, device=device)
+            cat_ids = torch.cat([mem_pad, token_type_ids], dim=0)
+
+            # `1` indicates not in the same segment [qlen x klen x bsz]
+            seg_mat = (token_type_ids[:, None] != cat_ids[None, :]).long()
+            seg_mat = F.one_hot(seg_mat, num_classes=2).to(dtype_float)
+        else:
+            seg_mat = None
+
+        ##### Positional encoding
+        pos_emb = self.relative_positional_encoding(qlen, klen, bsz=bsz)
+        pos_emb = self.dropout(pos_emb)
+
+        # Prepare head mask if needed
+        # 1.0 in head_mask indicate we keep the head
+        # attention_probs has shape bsz x n_heads x N x N
+        # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads] (a head_mask for each layer)
+        # and head_mask is converted to shape [num_hidden_layers x qlen x klen x bsz x n_head]
+        if head_mask is not None:
+            if head_mask.dim() == 1:
+                head_mask = head_mask.unsqueeze(0).unsqueeze(0).unsqueeze(0).unsqueeze(0)
+                head_mask = head_mask.expand(self.n_layer, -1, -1, -1, -1)
+            elif head_mask.dim() == 2:
+                head_mask = head_mask.unsqueeze(1).unsqueeze(1).unsqueeze(1)
+            head_mask = head_mask.to(dtype=next(self.parameters()).dtype) # switch to fload if need + fp16 compatibility
+        else:
+            head_mask = [None] * self.n_layer
+
+        new_mems = ()
+        if mems is None:
+            mems = [None] * len(self.layer)
+
+        attentions = []
+        hidden_states = []
+        AV_index = self.newly_added_config["AV_index"]
+        for i, layer_module in enumerate(self.layer):
+            if AV_index >= 0 and i == AV_index:
+                output_h = self.map_audio_visual(output_h,acoustic,visual)
+            elif AV_index == -1:
+                output_h = self.map_all_audio_visual[i](output_h,acoustic,visual)
+            elif AV_index == -2:
+                output_h = output_h
+            # cache new mems
+            new_mems = new_mems + (self.cache_mem(output_h, mems[i]),)
+            if self.output_hidden_states:
+                hidden_states.append((output_h, output_g) if output_g is not None else output_h)
+
+            outputs = layer_module(output_h, output_g, attn_mask_h=non_tgt_mask, attn_mask_g=attn_mask,
+                                   r=pos_emb, seg_mat=seg_mat, mems=mems[i], target_mapping=target_mapping,
+                                   head_mask=head_mask[i])
+            output_h, output_g = outputs[:2]
+            if self.output_attentions:
+                attentions.append(outputs[2])
+
+        # Add last hidden state
+        if self.output_hidden_states:
+            hidden_states.append((output_h, output_g) if output_g is not None else output_h)
+
+        output = self.dropout(output_g if output_g is not None else output_h)
+
+        # Prepare outputs, we transpose back here to shape [bsz, len, hidden_dim] (cf. beginning of forward() method)
+        outputs = (output.permute(1, 0, 2).contiguous(), new_mems)
+        if self.output_hidden_states:
+            if output_g is not None:
+                hidden_states = tuple(h.permute(1, 0, 2).contiguous() for hs in hidden_states for h in hs)
+            else:
+                hidden_states = tuple(hs.permute(1, 0, 2).contiguous() for hs in hidden_states)
+            outputs = outputs + (hidden_states,)
+        if self.output_attentions:
+            attentions = tuple(t.permute(2, 3, 0, 1).contiguous() for t in attentions)
+            outputs = outputs + (attentions,)
+
+        return outputs  # outputs, new_mems, (hidden_states), (attentions)
 
 @add_start_docstrings("""XLNet Model with a language modeling head on top
     (linear layer with weights tied to the input embeddings). """,
@@ -1142,6 +1561,77 @@ class XLNetForSequenceClassification(XLNetPreTrainedModel):
 
         return outputs  # return (loss), logits, mems, (hidden states), (attentions)
 
+class MultimodalXLNetForSequenceClassification(XLNetPreTrainedModel):
+    r"""
+        **labels**: (`optional`) ``torch.LongTensor`` of shape ``(batch_size,)``:
+            Labels for computing the sequence classification/regression loss.
+            Indices should be in ``[0, ..., config.num_labels]``.
+            If ``config.num_labels == 1`` a regression loss is computed (Mean-Square loss),
+            If ``config.num_labels > 1`` a classification loss is computed (Cross-Entropy).
+
+    Outputs: `Tuple` comprising various elements depending on the configuration (config) and inputs:
+        **loss**: (`optional`, returned when ``labels`` is provided) ``torch.FloatTensor`` of shape ``(1,)``:
+            Classification (or regression if config.num_labels==1) loss.
+        **logits**: ``torch.FloatTensor`` of shape ``(batch_size, config.num_labels)``
+            Classification (or regression if config.num_labels==1) scores (before SoftMax).
+        **mems**:
+            list of ``torch.FloatTensor`` (one for each layer):
+            that contains pre-computed hidden-states (key and values in the attention blocks) as computed by the model
+            (see `mems` input above). Can be used to speed up sequential decoding and attend to longer context.
+        **hidden_states**: (`optional`, returned when ``config.output_hidden_states=True``)
+            list of ``torch.FloatTensor`` (one for the output of each layer + the output of the embeddings)
+            of shape ``(batch_size, sequence_length, hidden_size)``:
+            Hidden-states of the model at the output of each layer plus the initial embedding outputs.
+        **attentions**: (`optional`, returned when ``config.output_attentions=True``)
+            list of ``torch.FloatTensor`` (one for each layer) of shape ``(batch_size, num_heads, sequence_length, sequence_length)``:
+            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention heads.
+
+    Examples::
+
+        tokenizer = XLNetTokenizer.from_pretrained('xlnet-large-cased')
+        model = XLNetForSequenceClassification.from_pretrained('xlnet-large-cased')
+        input_ids = torch.tensor(tokenizer.encode("Hello, my dog is cute")).unsqueeze(0)  # Batch size 1
+        labels = torch.tensor([1]).unsqueeze(0)  # Batch size 1
+        outputs = model(input_ids, labels=labels)
+        loss, logits = outputs[:2]
+
+    """
+    def __init__(self, config, newly_added_config, num_labels):
+        super(MultimodalXLNetForSequenceClassification, self).__init__(config)
+        self.num_labels = num_labels
+        self.newly_added_config = newly_added_config
+
+        self.transformer = MultimodalXLNetModel(config, newly_added_config)
+        self.sequence_summary = SequenceSummary(config)
+        self.logits_proj = nn.Linear(config.d_model, config.num_labels)
+
+        self.apply(self.init_weights)
+
+    def forward(self, input_ids, visual, acoustic, token_type_ids=None, input_mask=None, attention_mask=None,
+                mems=None, perm_mask=None, target_mapping=None,
+                labels=None, head_mask=None):
+        transformer_outputs = self.transformer(input_ids, visual, acoustic, token_type_ids=token_type_ids,
+                                               input_mask=input_mask, attention_mask=attention_mask,
+                                               mems=mems, perm_mask=perm_mask, target_mapping=target_mapping,
+                                               head_mask=head_mask)
+        output = transformer_outputs[0]
+
+        output = self.sequence_summary(output)
+        logits = self.logits_proj(output)
+
+        outputs = (logits,) + transformer_outputs[1:]  # Keep mems, hidden states, attentions if there are in it
+
+        if labels is not None:
+            if self.num_labels == 1:
+                #  We are doing regression
+                loss_fct = MSELoss()
+                loss = loss_fct(logits.view(-1), labels.view(-1))
+            else:
+                loss_fct = CrossEntropyLoss()
+                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            outputs = (loss,) + outputs
+
+        return outputs  # return (loss), logits, mems, (hidden states), (attentions)
 
 @add_start_docstrings("""XLNet Model with a span classification head on top for extractive question-answering tasks like SQuAD (a linear layers on top of
     the hidden-states output to compute `span start logits` and `span end logits`). """,

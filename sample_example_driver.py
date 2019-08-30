@@ -430,11 +430,11 @@ def main(_config):
     # parser.add_argument('--server_ip', type=str, default='', help="Can be used for distant debugging.")
     # parser.add_argument('--server_port', type=str, default='', help="Can be used for distant debugging.")
     # args = parser.parse_args()
-    
+
     from collections import namedtuple
     args=namedtuple("configs",_config.keys())(*_config.values())
 
-    
+
     print("we started the main experiment:",args)
     #assert False
 
@@ -446,13 +446,13 @@ def main(_config):
         ptvsd.wait_for_attach()
 
     processors = {
-        
+
         "mrpc": MrpcProcessor,
-       
+
     }
 
     output_modes = {
-        
+
         "mrpc": "classification",
     }
 
@@ -698,7 +698,7 @@ def main(_config):
             elif output_mode == "regression":
                 loss_fct = MSELoss()
                 tmp_eval_loss = loss_fct(logits.view(-1), label_ids.view(-1))
-            
+
             eval_loss += tmp_eval_loss.mean().item()
             nb_eval_steps += 1
             if len(preds) == 0:
@@ -727,7 +727,7 @@ def main(_config):
                 logger.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
 
-       
+
 
 if __name__ == "__main__":
     main()

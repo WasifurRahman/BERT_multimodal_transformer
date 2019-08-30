@@ -23,6 +23,8 @@ import math
 import os
 import sys
 from io import open
+import random
+import numpy as np
 
 import torch
 from torch import nn
@@ -340,14 +342,14 @@ class  Audio_visual_mapper(nn.Module):
         self.beta = newly_added_config["beta_shift"]
         self.newly_added_config = newly_added_config
 
-        self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
+        self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-6)
         self.final_dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, text_embedding,acoustic,visual):
-
+        eps = 1e-6
         weight_v= F.relu(self.W_hv(torch.cat((visual,text_embedding),dim=-1)))
         weight_a= F.relu(self.W_ha(torch.cat((acoustic,text_embedding),dim=-1)))
-
+        #print(list(self.W_hv.parameters()))
         #shift_vector
         h_m = weight_v * self.W_v(visual) + weight_a * self.W_a(acoustic)
 
@@ -358,7 +360,7 @@ class  Audio_visual_mapper(nn.Module):
         hm_norm=torch.where(hm_norm==0,hm_norm_ones,hm_norm)
         #hm_norm[hm_norm==0.]=1.
 
-        thresh_hold = (em_norm/hm_norm)*self.beta
+        thresh_hold = (em_norm/(hm_norm+eps))*self.beta
 
         ones = torch.ones(thresh_hold.shape,requires_grad=True).to(self.newly_added_config["device"])
 
@@ -522,16 +524,27 @@ class BertLayer(nn.Module):
 
 
 class BertEncoder(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, newly_added_config):
         super(BertEncoder, self).__init__()
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
+        self.newly_added_config = newly_added_config
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
+        self.map_audio_visual = Audio_visual_mapper(config,newly_added_config)
+        self.map_all_audio_visual = nn.ModuleList([Audio_visual_mapper(config,newly_added_config) for _ in range(config.num_hidden_layers)])
 
-    def forward(self, hidden_states, attention_mask, head_mask=None):
+    def forward(self, hidden_states, visual, acoustic, attention_mask, head_mask=None):
         all_hidden_states = ()
         all_attentions = ()
         for i, layer_module in enumerate(self.layer):
+            AV_index = self.newly_added_config["AV_index"]
+            if AV_index >= 0 and i == AV_index:
+                hidden_states = self.map_audio_visual(hidden_states,acoustic,visual)
+            elif AV_index == -1:
+                hidden_states = self.map_all_audio_visual[i](hidden_states,acoustic,visual)
+            elif AV_index == -2:
+                hidden_states = hidden_states
+
             if self.output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
@@ -868,8 +881,7 @@ class MultimodalBertModel(BertPreTrainedModel):
         super(MultimodalBertModel, self).__init__(config)
         self.newly_added_config = newly_added_config
         self.embeddings = BertEmbeddings(config)
-        self.map_audio_visual = Audio_visual_mapper(config,newly_added_config)
-        self.encoder = BertEncoder(config)
+        self.encoder = BertEncoder(config,newly_added_config)
         self.pooler = BertPooler(config)
         self.apply(self.init_weights)
 
@@ -907,9 +919,9 @@ class MultimodalBertModel(BertPreTrainedModel):
         embedding_output = self.embeddings(input_ids, token_type_ids)
         #print("embedding_out:",embedding_output.size(), "acoustic:",acoustic.size()," visual:",visual.size())
         #print("The newly config:",self.newly_added_config)
-        embedding_output = self.map_audio_visual(embedding_output,acoustic,visual)
         #assert False
         encoder_outputs = self.encoder(embedding_output,
+                                       visual, acoustic,
                                        extended_attention_mask,
                                        head_mask=head_mask)
         sequence_output = encoder_outputs[0]
@@ -1328,7 +1340,7 @@ class MultimodalBertForSequenceClassification(BertPreTrainedModel):
     logits = model(input_ids, token_type_ids, input_mask)
     ```
     """
-    def __init__(self, config, newly_added_config,num_labels):
+    def __init__(self, config, newly_added_config, num_labels):
         super(MultimodalBertForSequenceClassification, self).__init__(config)
         self.num_labels = num_labels
         self.newly_added_config = newly_added_config

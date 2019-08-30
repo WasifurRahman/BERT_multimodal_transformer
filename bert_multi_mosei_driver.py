@@ -16,7 +16,7 @@ import os
 import random
 import pickle
 import sys
-from global_configs import *
+import global_configs
 
 sys.path.insert(0,'./pytorch-transformers')
 # from mosi_dataset_constants import SDK_PATH, DATA_PATH, WORD_EMB_PATH, CACHE_PATH
@@ -41,7 +41,7 @@ from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
-from torch.nn import CrossEntropyLoss, L1Loss
+from torch.nn import CrossEntropyLoss, MSELoss
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef
 
@@ -57,12 +57,12 @@ logger = logging.getLogger(__name__)
 from sacred import Experiment
 import optuna
 
-bert_multi_ex = Experiment('bert_multimodal_transformer')
+bert_multi_mosei_ex = Experiment('bert_mosei_multimodal_transformer')
 from sacred.observers import MongoObserver
 from global_configs import *
 url_database = conf_url_database
 mongo_database_name = conf_mongo_database_name
-bert_multi_ex.observers.append(MongoObserver.create(url= url_database ,db_name= mongo_database_name))
+bert_multi_mosei_ex.observers.append(MongoObserver.create(url= url_database ,db_name= mongo_database_name))
 
 torch.cuda.empty_cache()
 
@@ -103,7 +103,7 @@ class InputFeatures(object):
 
 
 
-@bert_multi_ex.config
+@bert_multi_mosei_ex.config
 def cnf():
     dataset_location=None
     bert_model=None
@@ -141,7 +141,8 @@ def cnf():
     dev_batch_size=None
     test_batch_size=None
     shuffle=True
-    best_model_path =  our_model_saving_path+str(node_index) +"bert_best_model.chkpt"
+    num_workers=2
+    best_model_path =  our_model_saving_path +str(node_index) +"_best_model.chkpt"
     loss_function="ll1"
     save_model=True
     save_mode='best'
@@ -181,31 +182,47 @@ def multi_collate(batch):
     return sentences, visual, acoustic, labels, lengths
 
 
-@bert_multi_ex.capture
+@bert_multi_mosei_ex.capture
 def convert_examples_to_features(examples, label_list, max_seq_length,
-                                 tokenizer, output_mode,_config):
+                                 tokenizer, output_mode, partition, _config):
     """Loads a data file into a list of `InputBatch`s."""
     #print("label_list:",label_list)
 
-    label_map = {label : i for i, label in enumerate(label_list)}
-    with open(os.path.join(_config["dataset_location"],'word2id.pickle'), 'rb') as handle:
-        word_2_id = pickle.load(handle)
-    id_2_word = { id_:word for (word,id_) in word_2_id.items()}
-    #print(id_2_word)
+    with open(os.path.join(_config["dataset_location"],'MOSEI_WORDS.pkl'), 'rb') as handle:
+        sentences = pickle.load(handle)[partition]
 
 
     features = []
-    for (ex_index, example) in enumerate(examples):
+    for i in range(len(examples['id'])):
+        words = []
+        word_cutoff = None
+        word_ind = 0
+        for w in sentences[i]:
+            if w != 'NW':
+                words.append(w)
+                if word_cutoff is None:
+                    word_cutoff = word_ind
+            word_ind += 1
+        words = " ".join(words)
 
-        (words, visual, acoustic), label, segment = example
+        visual, acoustic, label = examples['vision'][i][word_cutoff:], examples['audio'][i][word_cutoff:], examples['labels'][i]
+
+        segment = str(i)
         #print(words,label, segment)
         #we will look at acoustic and visual later
-        words = " ".join([id_2_word[w] for w in words])
+        #words = " ".join([id_2_word[w] for w in words])
         #print("string word:", words)
         example = InputExample(guid = segment, text_a = words, text_b=None, label=label.item())
-
         #In amir's tokenizer, we need to give this invertable=True for it to work properly
+        #print(example.text_a)
         tokens_a,inversions_a = tokenizer.tokenize(example.text_a,invertable=True)
+        temp_tokens = []
+        for token in tokens_a:
+            if token == 'sp':
+                temp_tokens.append('[unused97]')
+            else:
+                temp_tokens.append(token)
+        tokens_a = temp_tokens
         #print("The new tokenizer:",tokens_a,inversions_a)
         #assert False
 
@@ -218,6 +235,23 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
 
         visual = np.array(new_visual)
         acoustic = np.array(new_audio)
+
+        visual_max = np.nanmax(visual[np.inf != visual])
+        visual_min = np.nanmin(visual[-np.inf != visual])
+        acoustic_max = np.nanmax(acoustic[np.inf != acoustic])
+        acoustic_min = np.nanmin(acoustic[-np.inf != acoustic])
+
+        visual[np.isnan(visual)] = 0.0
+        acoustic[np.isnan(acoustic)] = 0.0
+
+        visual[np.isinf(visual)] = visual_max
+        visual[np.isneginf(visual)] = visual_min
+        acoustic[np.isinf(acoustic)] = acoustic_max
+        acoustic[np.isneginf(acoustic)] = acoustic_min
+
+        visual = (visual - np.mean(visual)) / (np.std(visual) + 1e-12)
+        acoustic = (acoustic - np.mean(acoustic) / (np.std(acoustic)) + 1e-12)
+
         #print(visual,visual.shape)#47
         #print(acoustic,acoustic.shape)#74
         #TODO:As we do not have a second token, we are keeping it unchanged for now
@@ -302,7 +336,6 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         assert visual.shape[0] == max_seq_length
 
 
-
         if output_mode == "classification":
             label_id = label_map[example.label]
         elif output_mode == "regression":
@@ -317,6 +350,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
                               input_mask=input_mask,
                               segment_ids=segment_ids,
                               label_id=label_id,))
+
     return features
 
 
@@ -336,10 +370,11 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
         else:
             tokens_b.pop()
 
-@bert_multi_ex.capture
-def get_appropriate_dataset(data,tokenizer, output_mode,_config):
+@bert_multi_mosei_ex.capture
+def get_appropriate_dataset(data,tokenizer, output_mode, partition, _config):
+
     features = convert_examples_to_features(
-            data, _config["label_list"],_config["max_seq_length"], tokenizer, output_mode)
+            data, _config["label_list"],_config["max_seq_length"], tokenizer, output_mode, partition)
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
     all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
@@ -353,11 +388,18 @@ def get_appropriate_dataset(data,tokenizer, output_mode,_config):
     elif output_mode == "regression":
         all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.float)
 
+    print('ALL LABELS ID: ', all_label_ids)
+
     dataset = TensorDataset(all_input_ids, all_visual,all_acoustic,all_input_mask, all_segment_ids, all_label_ids)
     return dataset
 
+def convert(data):
+    if isinstance(data, bytes):  return data.decode('ascii')
+    if isinstance(data, dict):   return dict(map(convert, data.items()))
+    if isinstance(data, tuple):  return map(convert, data)
+    return data
 
-@bert_multi_ex.capture
+@bert_multi_mosei_ex.capture
 def set_up_data_loader(_config):
 
     # #MUST remove it
@@ -374,24 +416,26 @@ def set_up_data_loader(_config):
     #         num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
 
 
-    with open(os.path.join(_config["dataset_location"],'all_mod_data.pickle'), 'rb') as handle:
+    with open(os.path.join(_config["dataset_location"],'mosei_senti_data.pkl'), 'rb') as handle:
         all_data = pickle.load(handle)
+
     train_data = all_data["train"]
-    dev_data=all_data["dev"]
-    test_data=all_data["test"]
+    dev_data = all_data["valid"]
+    test_data = all_data["test"]
 
     if(_config["prototype"]):
-        train_data=train_data[:100]
-        dev_data=dev_data[:100]
-        test_data=test_data[:100]
+        datas = [train_data,dev_data,test_data]
+        for data in datas:
+            for key in data:
+                data[key] = data[key][:100]
 
 
     tokenizer = BertTokenizer.from_pretrained(_config["bert_model"], do_lower_case=_config["do_lower_case"])
     output_mode = _config["output_mode"]
 
-    train_dataset = get_appropriate_dataset(train_data,tokenizer, output_mode,_config)
-    dev_dataset = get_appropriate_dataset(dev_data,tokenizer, output_mode,_config)
-    test_dataset = get_appropriate_dataset(test_data,tokenizer, output_mode,_config)
+    train_dataset = get_appropriate_dataset(train_data,tokenizer, output_mode, 'train', _config)
+    dev_dataset = get_appropriate_dataset(dev_data,tokenizer, output_mode, 'valid', _config)
+    test_dataset = get_appropriate_dataset(test_data,tokenizer, output_mode, 'test', _config)
 
     #print("train_dataset:",train_dataset)
     #print(len(train_dataset),_config["train_batch_size"],_config["gradient_accumulation_steps"], _config["num_train_epochs"])
@@ -415,7 +459,11 @@ def set_up_data_loader(_config):
     #data_loader = test_data_loader(train_X,train_Y,_config)
     return train_dataloader,dev_dataloader,test_dataloader,num_train_optimization_steps
 
-@bert_multi_ex.capture
+
+
+
+
+@bert_multi_mosei_ex.capture
 def set_random_seed(seed):
     """
     This function controls the randomness by setting seed in all the libraries we will use.
@@ -433,12 +481,12 @@ def set_random_seed(seed):
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-@bert_multi_ex.capture
+@bert_multi_mosei_ex.capture
 def _init_fn(worker_id,_config):
     np.random.seed(_config["seed"]+worker_id)
     random.seed(_config["seed"]+worker_id)
 
-@bert_multi_ex.capture
+@bert_multi_mosei_ex.capture
 def prep_for_training(num_train_optimization_steps,_config):
     tokenizer = BertTokenizer.from_pretrained(_config["bert_model"], do_lower_case=_config["do_lower_case"])
 
@@ -465,12 +513,15 @@ def prep_for_training(num_train_optimization_steps,_config):
                          warmup_steps=_config["warmup_proportion"] * num_train_optimization_steps)
     return model,optimizer,scheduler,tokenizer
 
-@bert_multi_ex.capture
+@bert_multi_mosei_ex.capture
 def train_epoch(model,train_dataloader,optimizer,scheduler,_config):
         model.train()
+
         tr_loss = 0
         nb_tr_examples, nb_tr_steps = 0, 0
         for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
+            #print('---------------PARAMS-------------')
+            #print(list(model.named_parameters()))
             batch = tuple(t.to(_config["device"]) for t in batch)
             input_ids, visual, acoustic, input_mask, segment_ids, label_ids = batch
             visual = torch.squeeze(visual,1)
@@ -485,7 +536,7 @@ def train_epoch(model,train_dataloader,optimizer,scheduler,_config):
                 loss_fct = CrossEntropyLoss()
                 loss = loss_fct(logits.view(-1, _config["num_labels"]), label_ids.view(-1))
             elif _config["output_mode"] == "regression":
-                loss_fct = L1Loss()
+                loss_fct = MSELoss()
                 loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
 
@@ -505,7 +556,7 @@ def train_epoch(model,train_dataloader,optimizer,scheduler,_config):
                 #global_step += 1
         return tr_loss
 
-@bert_multi_ex.capture
+@bert_multi_mosei_ex.capture
 def eval_epoch(model,dev_dataloader,optimizer,_config):
     model.eval()
     dev_loss = 0
@@ -527,7 +578,7 @@ def eval_epoch(model,dev_dataloader,optimizer,_config):
                 loss_fct = CrossEntropyLoss()
                 loss = loss_fct(logits.view(-1, _config["num_labels"]), label_ids.view(-1))
             elif _config["output_mode"] == "regression":
-                loss_fct = L1Loss()
+                loss_fct = MSELoss()
                 loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
 
@@ -541,7 +592,7 @@ def eval_epoch(model,dev_dataloader,optimizer,_config):
 
     return dev_loss
 
-@bert_multi_ex.capture
+@bert_multi_mosei_ex.capture
 def test_epoch(model,data_loader,_config):
     ''' Epoch operation in evaluation phase '''
 
@@ -574,7 +625,7 @@ def test_epoch(model,data_loader,_config):
                 loss_fct = CrossEntropyLoss()
                 tmp_eval_loss = loss_fct(logits.view(-1, num_labels), label_ids.view(-1))
             elif _config["output_mode"] == "regression":
-                loss_fct = L1Loss()
+                loss_fct = MSELoss()
                 tmp_eval_loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
             eval_loss += tmp_eval_loss.mean().item()
@@ -590,6 +641,10 @@ def test_epoch(model,data_loader,_config):
         eval_loss = eval_loss / nb_eval_steps
         preds = preds[0]
         all_labels=all_labels[0]
+
+        print('preds: ',preds)
+        print('all_labels: ',all_labels)
+
         if _config["output_mode"] == "classification":
             preds = np.argmax(preds, axis=1)
         elif _config["output_mode"] == "regression":
@@ -609,7 +664,7 @@ def test_epoch(model,data_loader,_config):
 
     return preds,all_labels
 
-@bert_multi_ex.capture
+@bert_multi_mosei_ex.capture
 def multiclass_acc(preds, truths):
     """
     Compute the multiclass accuracy w.r.t. groundtruth
@@ -619,7 +674,7 @@ def multiclass_acc(preds, truths):
     """
     return np.sum(np.round(preds) == np.round(truths)) / float(len(truths))
 
-@bert_multi_ex.capture
+@bert_multi_mosei_ex.capture
 def test_score_model(model,test_data_loader, _config, _run, exclude_zero=False):
 
     predictions,y_test = test_epoch(model,test_data_loader)
@@ -669,13 +724,13 @@ def test_score_model(model,test_data_loader, _config, _run, exclude_zero=False):
 
     return accuracy, mae, corr, mult_a5, mult_a7, f_score
 
-@bert_multi_ex.capture
+@bert_multi_mosei_ex.capture
 def train(model, train_dataloader, validation_dataloader,test_data_loader,optimizer,scheduler,_config,_run):
     ''' Start training '''
     model_path = _config["best_model_path"]
     best_test_acc = 0.0
-
     valid_losses = []
+    trial = global_configs.EXP_TRIAL
     for epoch_i in range(int(_config["num_train_epochs"])):
 
         #print('[ Epoch', epoch_i, ']')
@@ -688,12 +743,6 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
 
         valid_loss = eval_epoch(model, validation_dataloader,optimizer)
         _run.log_scalar("dev.loss", valid_loss, epoch_i)
-
-        '''
-        trial.report(valid_loss,epoch_i)
-        if trial.should_prune():
-            raise optuna.structs.TrialPruned()
-        '''
 
         valid_losses.append(valid_loss)
         print("\nepoch:{},train_loss:{}, valid_loss:{}".format(epoch_i,train_loss,valid_loss))
@@ -717,6 +766,7 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
 
         _run.log_scalar("test_per_epoch.zero_acc", zero_test_acurracy, epoch_i)
         _run.log_scalar("test_per_epcoh.zero_f1", zero_test_f1, epoch_i)
+
         if _config["save_model"]:
             # if _config["save_mode"] == 'all':
             #     model_name = _config["save_model"] + '_accu_{accu:3.3f}.chkpt'.format(accu=100*valid_loss)
@@ -730,10 +780,15 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
                     print('    - [Info] The checkpoint file has been updated.')
                     _run.info['best_test_acc'] = test_accuracy
                     best_test_acc = test_accuracy
+
+        trial.report(test_accuracy,epoch_i)
+        if trial.should_prune():
+            raise optuna.structs.TrialPruned()
+
     #After the entire training is over, save the best model as artifact in the mongodb
 
 
-@bert_multi_ex.automain
+@bert_multi_mosei_ex.automain
 def main(_config):
     print("Seed: ",_config["seed"])
     set_random_seed(_config["seed"])
@@ -743,6 +798,8 @@ def main(_config):
     model,optimizer,scheduler,tokenizer = prep_for_training(num_train_optimization_steps)
 
     train(model,train_data_loader,dev_data_loader,test_data_loader,optimizer,scheduler)
+
+
 
     # assert False
 
