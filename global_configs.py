@@ -9,7 +9,7 @@ Created on Sat Mar 16 08:34:31 2019
 running_as_job_array = False
 conf_prototype=False #use during development, not in the funal version
 conf_inference=False ##do not bother right now
-conf_url_database = 'bhg0003' #where is the database?
+conf_url_database = 'bhg0024' #where is the database?
 all_datasets_location = "/scratch/slee232/processed_multimodal_data/"#The place where you are storing the data
 CACHE_DIR="/scratch/slee232/processed_multimodal_data/MRPC/model_cache"#make sure that it is avalid directory
 our_model_saving_path = "/scratch/slee232/saved_models_from_projects/bert_transformer/"#make sure that it is valid
@@ -30,7 +30,9 @@ else:#the real databse you want to explore and report the results on
     #conf_mongo_database_name = 're_xlnet_gated_shift_optuna'
     #conf_mongo_database_name = 're_xlnet_optuna'
     #conf_mongo_database_name = 'mosei_bert'
-    conf_mongo_database_name = 'mosei_m_bert'
+    #conf_mongo_database_name = 'mosei_m_bert'
+    #conf_mongo_database_name = 'mosei_xlnet'
+    conf_mongo_database_name = 'mosei_m_xlnet'
 
 def init_trial():
     global EXP_TRIAL

@@ -40,6 +40,7 @@ from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
+import global_configs
 
 from torch.nn import CrossEntropyLoss, MSELoss
 from scipy.stats import pearsonr, spearmanr
@@ -56,6 +57,7 @@ from pytorch_transformers.optimization import AdamW, WarmupLinearSchedule
 logger = logging.getLogger(__name__)
 from sacred import Experiment
 import optuna
+torch.cuda.empty_cache()
 
 xlnet_multi_mosei_ex = Experiment('xlnet_multimodal_transformer')
 from sacred.observers import MongoObserver
@@ -63,8 +65,6 @@ from global_configs import *
 url_database = conf_url_database
 mongo_database_name = conf_mongo_database_name
 xlnet_multi_mosei_ex.observers.append(MongoObserver.create(url= url_database ,db_name= mongo_database_name))
-
-torch.cuda.empty_cache()
 
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
@@ -215,7 +215,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         #print("string word:", words)
         example = InputExample(guid = segment, text_a = words, text_b=None, label=label.item())
 
-        visual, acoustic, label = examples['visual'][i][word_cutoff:], examples['acoustic'][i][word_cutoff:], examples['labels_sent'][i]
+        visual, acoustic, label = examples['vision'][i][word_cutoff:], examples['audio'][i][word_cutoff:], examples['labels'][i]
 
         tokens_a,inversions_a = tokenizer.tokenize(example.text_a,invertable=True)
         temp_tokens = []
@@ -237,6 +237,23 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
 
         visual = np.array(new_visual)
         acoustic = np.array(new_audio)
+
+        visual_max = np.nanmax(visual[np.inf != visual])
+        visual_min = np.nanmin(visual[-np.inf != visual])
+        acoustic_max = np.nanmax(acoustic[np.inf != acoustic])
+        acoustic_min = np.nanmin(acoustic[-np.inf != acoustic])
+
+        visual[np.isnan(visual)] = 0.0
+        acoustic[np.isnan(acoustic)] = 0.0
+
+        visual[np.isinf(visual)] = visual_max
+        visual[np.isneginf(visual)] = visual_min
+        acoustic[np.isinf(acoustic)] = acoustic_max
+        acoustic[np.isneginf(acoustic)] = acoustic_min
+
+        visual = (visual - np.mean(visual)) / (np.std(visual) + 1e-12)
+        acoustic = (acoustic - np.mean(acoustic) / (np.std(acoustic)) + 1e-12)
+
         #print(visual,visual.shape)#47
         #print(acoustic,acoustic.shape)#74
         #TODO:As we do not have a second token, we are keeping it unchanged for now
@@ -401,7 +418,7 @@ def set_up_data_loader(_config):
     #         num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
 
 
-    with open(os.path.join(_config["dataset_location"],'MOSEI_SANGWU.pkl'), 'rb') as handle:
+    with open(os.path.join(_config["dataset_location"],'mosei_senti_data.pkl'), 'rb') as handle:
         all_data = pickle.load(handle,encoding='bytes')
 
     all_data = convert(all_data)
@@ -417,7 +434,7 @@ def set_up_data_loader(_config):
                 data[key] = data[key][:100]
 
 
-    tokenizer = XLNetTokenizer.from_pretrained(_config["xlnet_model"], do_lower_case=_config["do_lower_case"])
+    tokenizer = XLNetTokenizer.from_pretrained(_config["xlnet_model"])
     output_mode = _config["output_mode"]
 
     train_dataset = get_appropriate_dataset(train_data,tokenizer, output_mode, 'train', _config)
@@ -545,6 +562,7 @@ def train_epoch(model,train_dataloader,optimizer,scheduler,_config):
 
 @xlnet_multi_mosei_ex.capture
 def eval_epoch(model,dev_dataloader,optimizer,_config):
+    torch.cuda.empty_cache()
     model.eval()
     dev_loss = 0
     nb_dev_examples, nb_dev_steps = 0, 0
@@ -586,6 +604,7 @@ def test_epoch(model,data_loader,_config):
 
     # epoch_loss = 0.0
     # num_batches=0
+    torch.cuda.empty_cache()
     model.eval()
     # returned_Y = None
     # returned_predictions = None
@@ -718,6 +737,7 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
     best_test_acc = 0.0
 
     valid_losses = []
+    trial = global_configs.EXP_TRIAL
     for epoch_i in range(int(_config["num_train_epochs"])):
 
         #print('[ Epoch', epoch_i, ']')
@@ -772,6 +792,9 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
                     print('    - [Info] The checkpoint file has been updated.')
                     _run.info['best_test_acc'] = test_accuracy
                     best_test_acc = test_accuracy
+        trial.report(test_accuracy,epoch_i)
+        if trial.should_prune():
+            raise optuna.structs.TrialPruned()
     #After the entire training is over, save the best model as artifact in the mongodb
 
 

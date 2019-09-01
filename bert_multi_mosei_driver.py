@@ -515,6 +515,7 @@ def prep_for_training(num_train_optimization_steps,_config):
 
 @bert_multi_mosei_ex.capture
 def train_epoch(model,train_dataloader,optimizer,scheduler,_config):
+        torch.cuda.empty_cache()
         model.train()
 
         tr_loss = 0
@@ -558,6 +559,7 @@ def train_epoch(model,train_dataloader,optimizer,scheduler,_config):
 
 @bert_multi_mosei_ex.capture
 def eval_epoch(model,dev_dataloader,optimizer,_config):
+    torch.cuda.empty_cache()
     model.eval()
     dev_loss = 0
     nb_dev_examples, nb_dev_steps = 0, 0
@@ -599,6 +601,7 @@ def test_epoch(model,data_loader,_config):
 
     # epoch_loss = 0.0
     # num_batches=0
+    torch.cuda.empty_cache()
     model.eval()
     # returned_Y = None
     # returned_predictions = None

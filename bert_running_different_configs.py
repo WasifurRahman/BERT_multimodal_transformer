@@ -120,7 +120,7 @@ def initiate_main_experiment(_config):
     #main_init_configs["hidden_dropout_prob"]=0.45
     #main_init_configs["beta_shift"]=0
 
-    main_init_configs["num_train_epochs"] =  12
+    main_init_configs["num_train_epochs"] =  30 if args.dataset == 'mosi' else 12
     #commenting out temporarily
     main_init_configs["output_dir"] =  "/tmp/"+TASK_NAME
 

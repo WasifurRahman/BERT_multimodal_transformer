@@ -9,6 +9,7 @@ Created on Thu Feb  7 13:06:48 2019
 #from staged_multimodal_transformer_driver import ex
 import os
 import argparse, sys
+import global_configs
 from global_configs import *
 from sacred import Experiment
 import time
@@ -39,12 +40,12 @@ device_num = int(args.device[-1])
 torch.cuda.set_device(device_num)
 
 if args.multi:
-    DB = 'sqlite:///hparam_search/xlnet_multi_low_lr_' + args.dataset + '.db'
-    if not os.path.exists('./hparam_search/xlnet_multi_low_lr_' + args.dataset + '.db'):
+    DB = 'sqlite:///hparam_search/xlnet_multi_' + args.dataset + '.db'
+    if not os.path.exists('./hparam_search/xlnet_multi_' + args.dataset + '.db'):
         engine = create_engine(DB)
 else:
-    DB = 'sqlite:///hparam_search/xlnet_low_lr_' + args.dataset + '.db'
-    if not os.path.exists('./hparam_search/xlnet_low_lr_' + args.dataset + '.db'):
+    DB = 'sqlite:///hparam_search/xlnet_' + args.dataset + '.db'
+    if not os.path.exists('./hparam_search/xlnet_' + args.dataset + '.db'):
         engine = create_engine(DB)
 
 dataset_specific_config = {
@@ -109,18 +110,18 @@ def initiate_main_experiment(_config):
     main_init_configs["device"] = args.device
 
     #Relevant for us:Sangwu
-    main_init_configs["max_seq_length"]  = 35 #TODO:May be shortened
+    main_init_configs["max_seq_length"]  = 35 if args.dataset == 'mosi' else 50 #TODO:May be shortened
     main_init_configs["train_batch_size"] = _config["train_batch_size"]
 
     if args.multi:
         main_init_configs["acoustic_in_dim"] = 74
-        main_init_configs["visual_in_dim"] = 47
+        main_init_configs["visual_in_dim"] = 47 if args.dataset == 'mosi' else 35
         main_init_configs["h_merge_sent"] = 768
 
     #main_init_configs["hidden_dropout_prob"]=0.45
     #main_init_configs["beta_shift"]=0
 
-    main_init_configs["num_train_epochs"] =  15
+    main_init_configs["num_train_epochs"] = 30 if args.dataset == 'mosi' else 12
     #commenting out temporarily
     main_init_configs["output_dir"] =  "/tmp/"+TASK_NAME
 
@@ -158,14 +159,13 @@ def return_unk():
 
 def objective(trial):
     optuna_configs = {}
-    optuna_configs["learning_rate"] = trial.suggest_categorical("learning_rate", [1e-6,1.5e-6,2e-6,2.5e-6,3e-6,3.5e-6,4e-6,4.5e-6,5e-6,5.5e-6,6e-6])
-    optuna_configs["gradient_accumulation_steps"] = trial.suggest_categorical("gradient_accumulation_steps", [1])
-    optuna_configs["train_batch_size"] = trial.suggest_categorical("train_batch_size", [32,48,64])
+    optuna_configs["learning_rate"] = trial.suggest_categorical("learning_rate", [1e-5,1.5e-5,2e-5,2.5e-5,3e-5,3.5e-5,4e-5,4.5e-5,5e-5,5.5e-5,6e-5])
+    optuna_configs["gradient_accumulation_steps"] = trial.suggest_categorical("gradient_accumulation_steps", [1,2,3])
     optuna_configs["AV_index"] = -2
 
 
     if args.multi:
-        optuna_configs["hidden_dropout_prob"] = trial.suggest_categorical("hidden_dropout_prob", [0.1,0.2,0.25,0.3])
+        optuna_configs["hidden_dropout_prob"] = trial.suggest_categorical("hidden_dropout_prob", [0.1,0.2,0.25,0.3,0.35,0.4,0.45,0.5,0.55,0.6])
         optuna_configs["beta_shift"] = trial.suggest_categorical("beta_shift", [0.25,0.3,0.35,0.4,0.45,0.5,0.6,0.7,0.8,0.9,1,1.5,1.8,2,2.2,2.5,2.8,3,3.2,3.4,3.6,3.8,4,4.5,4.8,5,5.5,5.8,6,6.2,6.4,7,8,10,12,14,16,20,22,24,28,30,32,40,44,50,60,70,80,100])
         optuna_configs["h_audio_lstm"] =  trial.suggest_categorical("h_audio_lstm", [16])
         optuna_configs["h_video_lstm"] =  trial.suggest_categorical("h_video_lstm", [16])
@@ -173,6 +173,7 @@ def objective(trial):
         optuna_configs["fc1_dropout"] =  trial.suggest_categorical("fc1_dropout", [0.1])
         optuna_configs["AV_index"] = 1
 
+    global_configs.EXP_TRIAL = trial
     optuna_configs["seed"] = random.randrange(2**32 -1)
     optuna_configs['dataset_location'] = dataset_path
     run = skeleton_ex.run(command_name='initiate_main_experiment',config_updates=optuna_configs)
@@ -183,13 +184,14 @@ def objective(trial):
 #run it like ./bert_running_different_configs.py --dataset=mosi
 #run: ./bert_running_different_configs.py --dataset=ETS
 if __name__ == '__main__':
+    global_configs.init_trial()
     if(os.path.isdir(dataset_path)):
-        pruner = optuna.pruners.MedianPruner()
+        pruner = optuna.pruners.MedianPruner(n_startup_trials=15,n_warmup_steps=3)
         if args.load_study:
             study = optuna.load_study(study_name='m-XLNet hparam search', pruner=pruner, storage=DB)
         else:
             study = optuna.create_study(study_name='m-XLNet hparam search', pruner=pruner, direction='maximize', storage=DB, load_if_exists=True)
-        study.optimize(objective, n_trials=10, n_jobs=1)
+        study.optimize(objective, n_trials=18, n_jobs=1)
         print(study.best_trial)
     else:
         raise NotADirectoryError("Please input the dataset name correctly")
