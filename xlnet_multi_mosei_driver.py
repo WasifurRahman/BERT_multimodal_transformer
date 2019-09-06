@@ -735,6 +735,7 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
     ''' Start training '''
     model_path = _config["best_model_path"]
     best_test_acc = 0.0
+    best_test_mae = 1.0
 
     valid_losses = []
     trial = global_configs.EXP_TRIAL
@@ -792,9 +793,14 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
                     print('    - [Info] The checkpoint file has been updated.')
                     _run.info['best_test_acc'] = test_accuracy
                     best_test_acc = test_accuracy
+                if test_mae <= best_test_mae:
+                    _run.info['best_test_mae'] = test_mae
+                    best_test_mae = test_mae
         trial.report(test_accuracy,epoch_i)
         if trial.should_prune():
             raise optuna.structs.TrialPruned()
+        if epoch_i > 5:
+            break
     #After the entire training is over, save the best model as artifact in the mongodb
 
 

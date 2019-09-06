@@ -495,7 +495,9 @@ def prep_for_training(num_train_optimization_steps,_config):
     model = MultimodalBertForSequenceClassification.multimodal_from_pretrained(_config["bert_model"],newly_added_config = _config,
               cache_dir=_config["cache_dir"],
               num_labels=_config["num_labels"])
-
+    for p in model.parameters():
+        if p.dim() > 1:
+            torch.nn.init.xavier_uniform_(p)
     model.to(_config["device"])
 
 
@@ -732,6 +734,7 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
     ''' Start training '''
     model_path = _config["best_model_path"]
     best_test_acc = 0.0
+    best_test_mae = 1.0
     valid_losses = []
     trial = global_configs.EXP_TRIAL
     for epoch_i in range(int(_config["num_train_epochs"])):
@@ -783,8 +786,11 @@ def train(model, train_dataloader, validation_dataloader,test_data_loader,optimi
                     print('    - [Info] The checkpoint file has been updated.')
                     _run.info['best_test_acc'] = test_accuracy
                     best_test_acc = test_accuracy
+                if test_mae <= best_test_mae:
+                    _run.info['best_test_mae'] = test_mae
+                    best_test_mae = test_mae
 
-        trial.report(test_accuracy,epoch_i)
+        trial.report(test_mae,epoch_i)
         if trial.should_prune():
             raise optuna.structs.TrialPruned()
 

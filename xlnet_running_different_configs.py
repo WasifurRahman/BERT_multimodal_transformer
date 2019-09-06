@@ -40,8 +40,8 @@ device_num = int(args.device[-1])
 torch.cuda.set_device(device_num)
 
 if args.multi:
-    DB = 'sqlite:///hparam_search/xlnet_multi_' + args.dataset + '.db'
-    if not os.path.exists('./hparam_search/xlnet_multi_' + args.dataset + '.db'):
+    DB = 'sqlite:///hparam_search/xlnet_multi_final_' + args.dataset + '.db'
+    if not os.path.exists('./hparam_search/xlnet_multi_final_' + args.dataset + '.db'):
         engine = create_engine(DB)
 else:
     DB = 'sqlite:///hparam_search/xlnet_' + args.dataset + '.db'
@@ -57,7 +57,7 @@ dataset_specific_config = {
         "moud":{'text_indices':(0,300),'audio_indices':(300,374),'video_indices':(374,409),'max_seq_len':21},
         "pom":{'text_indices':(0,300),'audio_indices':(300,343),'video_indices':(343,386),'max_seq_len':21},
         "youtube":{'text_indices':(0,300),'audio_indices':(300,374),'video_indices':(374,409),'max_seq_len':21},
-        "mosei":{'input_modalities_sizes':[300,5,20],'output_mode':'regression','label_list':[None],'dev_batch_size':229,'test_batch_size':685,'d_acoustic_in':74,'d_visual_in':35},
+        "mosei":{'input_modalities_sizes':[300,5,20],'output_mode':'regression','label_list':[None],'dev_batch_size':229,'test_batch_size':500,'d_acoustic_in':74,'d_visual_in':35},
         "MRPC":{}
         }
 
@@ -84,7 +84,7 @@ def sk_config():
     learning_rate = 5e-5
     gradient_accumulation_steps = 1
     AV_index = 1
-    train_batch_size = 32
+    train_batch_size = 40
     seed = 101
 
 @skeleton_ex.command
@@ -145,10 +145,7 @@ def initiate_main_experiment(_config):
     #result = bert_ex.run(command_name="main",config_updates=main_init_configs)
     #return
     if dataset_name=="mosi":
-        if args.multi:
-            result = xlnet_multi_ex.run(command_name="main",config_updates=main_init_configs)
-        else:
-            result = xlnet_ex.run(command_name="main",config_updates=main_init_configs)
+        result = xlnet_multi_ex.run(command_name="main",config_updates=main_init_configs)
     elif dataset_name=="mosei":
         result = xlnet_multi_mosei_ex.run(command_name="main",config_updates=main_init_configs)
     #must use seed for the main exp
@@ -160,7 +157,7 @@ def return_unk():
 def objective(trial):
     optuna_configs = {}
     optuna_configs["learning_rate"] = trial.suggest_categorical("learning_rate", [1e-5,1.5e-5,2e-5,2.5e-5,3e-5,3.5e-5,4e-5,4.5e-5,5e-5,5.5e-5,6e-5])
-    optuna_configs["gradient_accumulation_steps"] = trial.suggest_categorical("gradient_accumulation_steps", [1,2,3])
+    optuna_configs["gradient_accumulation_steps"] = trial.suggest_categorical("gradient_accumulation_steps", [1,2,3,4])
     optuna_configs["AV_index"] = -2
 
 
@@ -191,7 +188,7 @@ if __name__ == '__main__':
             study = optuna.load_study(study_name='m-XLNet hparam search', pruner=pruner, storage=DB)
         else:
             study = optuna.create_study(study_name='m-XLNet hparam search', pruner=pruner, direction='maximize', storage=DB, load_if_exists=True)
-        study.optimize(objective, n_trials=18, n_jobs=1)
+        study.optimize(objective, n_trials=20, n_jobs=1)
         print(study.best_trial)
     else:
         raise NotADirectoryError("Please input the dataset name correctly")

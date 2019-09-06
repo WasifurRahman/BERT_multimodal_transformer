@@ -120,7 +120,7 @@ def initiate_main_experiment(_config):
     #main_init_configs["hidden_dropout_prob"]=0.45
     #main_init_configs["beta_shift"]=0
 
-    main_init_configs["num_train_epochs"] =  30 if args.dataset == 'mosi' else 12
+    main_init_configs["num_train_epochs"] =  40 if args.dataset == 'mosi' else 12
     #commenting out temporarily
     main_init_configs["output_dir"] =  "/tmp/"+TASK_NAME
 
@@ -143,10 +143,7 @@ def initiate_main_experiment(_config):
     #result = bert_ex.run(command_name="main",config_updates=main_init_configs)
     #return
     if dataset_name=="mosi":
-        if args.multi:
-            result = bert_multi_ex.run(command_name="main",config_updates=main_init_configs)
-        else:
-            result = bert_ex.run(command_name="main",config_updates=main_init_configs)
+        result = bert_multi_ex.run(command_name="main",config_updates=main_init_configs)
     elif dataset_name=='mosei':
         result = bert_multi_mosei_ex.run(command_name="main",config_updates=main_init_configs)
     return result
@@ -157,7 +154,7 @@ def return_unk():
 def objective(trial):
     optuna_configs = {}
     optuna_configs["learning_rate"] = trial.suggest_categorical("learning_rate", [1e-5,1.5e-5,2e-5,2.5e-5,3e-5,3.5e-5,4e-5,4.5e-5,5e-5,5.5e-5,6e-5])
-    optuna_configs["gradient_accumulation_steps"] = trial.suggest_categorical("gradient_accumulation_steps", [1,3])
+    optuna_configs["gradient_accumulation_steps"] = trial.suggest_categorical("gradient_accumulation_steps", [1,2,3,4])
     optuna_configs["AV_index"] = -2
 
     if args.multi:
@@ -168,8 +165,11 @@ def objective(trial):
         optuna_configs["fc1_out"] =  trial.suggest_categorical("fc1_out", [32])
         optuna_configs["fc1_dropout"] =  trial.suggest_categorical("fc1_dropout", [0.1])
         optuna_configs["AV_index"] = 0
+
     global_configs.EXP_TRIAL = trial
-    optuna_configs["seed"] = random.randrange(2**32 -1)
+    optuna_configs["learning_rate"] = 3e-5
+    optuna_configs["gradient_accumulation_steps"] = 3
+    optuna_configs["seed"] = 729966952 #random.randrange(2**32 -1)
     optuna_configs['dataset_location'] = dataset_path
     run = skeleton_ex.run(command_name='initiate_main_experiment',config_updates=optuna_configs)
     #r = ex.run(named_configs=['search_space'],config_updates={"node_index":node_index,"prototype":True})
@@ -185,7 +185,7 @@ if __name__ == '__main__':
             study = optuna.load_study(study_name='m-BERT hparam search', pruner=pruner, storage=DB)
         else:
             study = optuna.create_study(study_name='m-BERT hparam search', pruner=pruner, direction='maximize', storage=DB, load_if_exists=True)
-        study.optimize(objective, n_trials=10, n_jobs=1)
+        study.optimize(objective, n_trials=1, n_jobs=1)
         print(study.best_trial)
     else:
         raise NotADirectoryError("Please input the dataset name correctly")

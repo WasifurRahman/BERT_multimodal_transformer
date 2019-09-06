@@ -448,6 +448,9 @@ def prep_for_training(num_train_optimization_steps,_config):
               cache_dir=_config["cache_dir"],
               num_labels=_config["num_labels"])
 
+    for p in model.parameters():
+        if p.dim() > 1:
+            torch.nn.init.xavier_uniform_(p)
     model.to(_config["device"])
 
 
