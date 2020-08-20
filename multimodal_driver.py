@@ -74,8 +74,8 @@ def get_inversion(tokens, SPIECE_MARKER="▁"):
     return inversions
 
 
-def convert_examples_to_features(examples, label_list, max_seq_length,
-                                 tokenizer, output_mode):
+def convert_to_features(examples, label_list, max_seq_length,
+                        tokenizer, output_mode):
 
     label_map = {label: i for i, label in enumerate(label_list)}
     with open(os.path.join(config["dataset_location"], 'word2id.pickle'), 'rb') as handle:
@@ -171,7 +171,7 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
 
 
 def get_appropriate_dataset(data, tokenizer, output_mode):
-    features = convert_examples_to_features(
+    features = convert_to_features(
         data, config["label_list"], config["max_seq_length"], tokenizer, output_mode)
     all_input_ids = torch.tensor(
         [f.input_ids for f in features], dtype=torch.long)
@@ -182,12 +182,8 @@ def get_appropriate_dataset(data, tokenizer, output_mode):
     all_visual = torch.tensor([f.visual for f in features], dtype=torch.float)
     all_acoustic = torch.tensor(
         [f.acoustic for f in features], dtype=torch.float)
-    if output_mode == "classification":
-        all_label_ids = torch.tensor(
-            [f.label_id for f in features], dtype=torch.long)
-    elif output_mode == "regression":
-        all_label_ids = torch.tensor(
-            [f.label_id for f in features], dtype=torch.float)
+    all_label_ids = torch.tensor(
+        [f.label_id for f in features], dtype=torch.float)
 
     dataset = TensorDataset(all_input_ids, all_visual, all_acoustic,
                             all_input_mask, all_segment_ids, all_label_ids)
@@ -277,14 +273,8 @@ def train_epoch(model, train_dataloader, optimizer, scheduler, config):
         outputs = model(input_ids, visual, acoustic, token_type_ids=segment_ids,
                         attention_mask=input_mask, labels=None)
         logits = outputs[0]
-
-        if config["output_mode"] == "classification":
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(
-                logits.view(-1, config["num_labels"]), label_ids.view(-1))
-        elif config["output_mode"] == "regression":
-            loss_fct = L1Loss()
-            loss = loss_fct(logits.view(-1), label_ids.view(-1))
+        loss_fct = L1Loss()
+        loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
         if config["gradient_accumulation_steps"] > 1:
             loss = loss / config["gradient_accumulation_steps"]
@@ -318,13 +308,8 @@ def eval_epoch(model, dev_dataloader, optimizer):
                             attention_mask=input_mask, labels=None)
             logits = outputs[0]
 
-            if config["output_mode"] == "classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(
-                    logits.view(-1, config["num_labels"]), label_ids.view(-1))
-            elif config["output_mode"] == "regression":
-                loss_fct = L1Loss()
-                loss = loss_fct(logits.view(-1), label_ids.view(-1))
+            loss_fct = L1Loss()
+            loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
             if config["gradient_accumulation_steps"] > 1:
                 loss = loss / config["gradient_accumulation_steps"]
@@ -338,14 +323,11 @@ def eval_epoch(model, dev_dataloader, optimizer):
 
 def test_epoch(model, data_loader):
     model.eval()
-    eval_loss = 0.0
-    nb_eval_steps = 0
     preds = []
     all_labels = []
 
     with torch.no_grad():
-
-        for batch in tqdm(data_loader, mininterval=2, desc='  - (Validation)   ', leave=False):
+        for batch in tqdm(data_loader):
             batch = tuple(t.to(DEVICE) for t in batch)
 
             input_ids, visual, acoustic, input_mask, segment_ids, label_ids = batch
@@ -353,38 +335,11 @@ def test_epoch(model, data_loader):
             acoustic = torch.squeeze(acoustic, 1)
             outputs = model(input_ids, visual, acoustic, token_type_ids=segment_ids,
                             attention_mask=input_mask, labels=None)
+
             logits = outputs[0]
 
-            # create eval loss and other metric required by the task
-            if config["output_mode"] == "classification":
-                loss_fct = CrossEntropyLoss()
-                tmp_eval_loss = loss_fct(
-                    logits.view(-1, num_labels), label_ids.view(-1))
-            elif config["output_mode"] == "regression":
-                loss_fct = L1Loss()
-                tmp_eval_loss = loss_fct(logits.view(-1), label_ids.view(-1))
-
-            eval_loss += tmp_eval_loss.mean().item()
-            nb_eval_steps += 1
-
-            if len(preds) == 0:
-                preds.append(logits.detach().cpu().numpy())
-                all_labels.append(label_ids.detach().cpu().numpy())
-            else:
-                preds[0] = np.append(
-                    preds[0], logits.detach().cpu().numpy(), axis=0)
-                all_labels[0] = np.append(
-                    all_labels[0], label_ids.detach().cpu().numpy(), axis=0)
-
-        eval_loss = eval_loss / nb_eval_steps
-        preds = preds[0]
-        all_labels = all_labels[0]
-
-        if config["output_mode"] == "classification":
-            preds = np.argmax(preds, axis=1)
-        elif config["output_mode"] == "regression":
-            preds = np.squeeze(preds)
-            all_labels = np.squeeze(all_labels)
+        preds = np.squeeze(preds)
+        labels = np.squeeze(all_labels)
 
     return preds, all_labels
 
@@ -404,34 +359,13 @@ def test_score_model(model, test_data_loader):
     predictions, y_test = test_epoch(model, test_data_loader)
     non_zeros = np.array([i for i, e in enumerate(
         y_test) if e != 0 or (not exclude_zero)])
-    predictions_a7 = np.clip(predictions, a_min=-3., a_max=3.)
-    y_test_a7 = np.clip(y_test, a_min=-3., a_max=3.)
-    predictions_a5 = np.clip(predictions, a_min=-2., a_max=2.)
-    y_test_a5 = np.clip(y_test, a_min=-2., a_max=2.)
 
     mae = np.mean(np.absolute(predictions - y_test))
-    #print("mae: ", mae)
-
     corr = np.corrcoef(predictions, y_test)[0][1]
-    #print("corr: ", corr)
-
-    mult_a7 = multiclass_acc(predictions_a7, y_test_a7)
-    mult_a5 = multiclass_acc(predictions_a5, y_test_a5)
-    #print("mult_acc: ", mult)
-
-    # As we canged the "Y" as probability, now we need to choose yes for >=0.5
-    if(config["loss_function"] == "bce"):
-        true_label = (y_test[non_zeros] >= 0.5)
-    elif(config["loss_function"] == "ll1"):
-        true_label = (y_test[non_zeros] >= 0)
 
     predicted_label = (predictions[non_zeros] >= 0)
 
     f_score = f1_score(true_label, predicted_label, average='weighted')
-
-    confusion_matrix_result = confusion_matrix(true_label, predicted_label)
-    classification_report_score = classification_report(
-        true_label, predicted_label, digits=5)
     accuracy = accuracy_score(true_label, predicted_label)
 
     print("Accuracy ", accuracy)
@@ -446,7 +380,7 @@ def test_score_model(model, test_data_loader):
         else:
             _run.info['final_result'] = [r]
 
-    return accuracy, mae, corr, mult_a5, mult_a7, f_score
+    return accuracy, mae, corr, f_score
 
 
 def train(model, train_dataloader, validation_dataloader, test_data_loader, optimizer, scheduler, config):
