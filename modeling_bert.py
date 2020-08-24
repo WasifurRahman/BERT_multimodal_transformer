@@ -8,6 +8,7 @@ from typing import Optional, Tuple
 import torch
 import torch.utils.checkpoint
 from torch import nn
+import torch.functional as F
 from torch.nn import CrossEntropyLoss, MSELoss
 
 from transformers.modeling_bert import BertPreTrainedModel
@@ -20,6 +21,9 @@ from transformers.file_utils import (
     add_start_docstrings_to_callable,
     replace_return_docstrings,
 )
+
+from transformers.modeling_bert import BertEmbeddings, BertEncoder, BertPooler
+
 from transformers.modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPooling,
@@ -37,6 +41,8 @@ from transformers.modeling_utils import (
     find_pruneable_heads_and_indices,
     prune_linear_layer,
 )
+
+from global_configs import TEXT_DIM, ACOUSTIC_DIM, VISUAL_DIM, DEVICE
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +80,13 @@ def mish(x):
     return x * torch.tanh(nn.functional.softplus(x))
 
 
-ACT2FN = {"gelu": gelu, "relu": torch.nn.functional.relu,
-          "swish": swish, "gelu_new": gelu_new, "mish": mish}
+ACT2FN = {
+    "gelu": gelu,
+    "relu": torch.nn.functional.relu,
+    "swish": swish,
+    "gelu_new": gelu_new,
+    "mish": mish,
+}
 
 
 BertLayerNorm = torch.nn.LayerNorm
@@ -85,11 +96,11 @@ class MAG(nn.Module):
     def __init__(self, config, multimodal_config):
         super(MAG, self).__init__()
 
-        self.W_hv = nn.Linear(VISUAL_DIM + H_MERGE_SENT, H_MERGE_SENT)
-        self.W_ha = nn.Linear(ACOUSTIC_DIM + H_MERGE_SENT, H_MERGE_SENT)
+        self.W_hv = nn.Linear(VISUAL_DIM + TEXT_DIM, TEXT_DIM)
+        self.W_ha = nn.Linear(ACOUSTIC_DIM + TEXT_DIM, TEXT_DIM)
 
-        self.W_v = nn.Linear(VISUAL_DIM, H_MERGE_SENT)
-        self.W_a = nn.Linear(ACOUSTIC_DIM, H_MERGE_SENT)
+        self.W_v = nn.Linear(VISUAL_DIM, TEXT_DIM)
+        self.W_a = nn.Linear(ACOUSTIC_DIM, TEXT_DIM)
         self.beta = multimodal_config["beta_shift"]
 
         self.LayerNorm = nn.LayerNorm(config.hidden_size)
@@ -97,10 +108,8 @@ class MAG(nn.Module):
 
     def forward(self, text_embedding, visual, acoustic):
         eps = 1e-6
-        weight_v = F.relu(
-            self.W_hv(torch.cat((visual, text_embedding), dim=-1)))
-        weight_a = F.relu(
-            self.W_ha(torch.cat((acoustic, text_embedding), dim=-1)))
+        weight_v = F.relu(self.W_hv(torch.cat((visual, text_embedding), dim=-1)))
+        weight_a = F.relu(self.W_ha(torch.cat((acoustic, text_embedding), dim=-1)))
 
         h_m = weight_v * self.W_v(visual) + weight_a * self.W_a(acoustic)
 
@@ -119,14 +128,14 @@ class MAG(nn.Module):
 
         acoustic_vis_embedding = alpha * h_m
 
-        embedding_output = self.dropout(self.LayerNorm(
-            acoustic_vis_embedding + text_embedding))
+        embedding_output = self.dropout(
+            self.LayerNorm(acoustic_vis_embedding + text_embedding)
+        )
 
         return embedding_output
 
 
 class MAG_BertModel(BertPreTrainedModel):
-
     def __init__(self, config, multimodal_config):
         super().__init__(config)
         self.config = config
@@ -168,45 +177,56 @@ class MAG_BertModel(BertPreTrainedModel):
         output_hidden_states=None,
         return_dict=None,
     ):
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        output_attentions = (
+            output_attentions
+            if output_attentions is not None
+            else self.config.output_attentions
         )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        output_hidden_states = (
+            output_hidden_states
+            if output_hidden_states is not None
+            else self.config.output_hidden_states
+        )
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
 
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError(
-                "You cannot specify both input_ids and inputs_embeds at the same time")
+                "You cannot specify both input_ids and inputs_embeds at the same time"
+            )
         elif input_ids is not None:
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
         else:
-            raise ValueError(
-                "You have to specify either input_ids or inputs_embeds")
+            raise ValueError("You have to specify either input_ids or inputs_embeds")
 
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=DEVICE)
         if token_type_ids is None:
-            token_type_ids = torch.zeros(
-                input_shape, dtype=torch.long, device=DEVICE)
+            token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=DEVICE)
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
         extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(
-            attention_mask, input_shape, device)
+            attention_mask, input_shape, DEVICE
+        )
 
         # If a 2D ou 3D attention mask is provided for the cross-attention
         # we need to make broadcastabe to [batch_size, num_heads, seq_length, seq_length]
         if self.config.is_decoder and encoder_hidden_states is not None:
-            encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
-            encoder_hidden_shape = (
-                encoder_batch_size, encoder_sequence_length)
+            (
+                encoder_batch_size,
+                encoder_sequence_length,
+                _,
+            ) = encoder_hidden_states.size()
+            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(
-                    encoder_hidden_shape, device=DEVICE)
+                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=DEVICE)
             encoder_extended_attention_mask = self.invert_attention_mask(
-                encoder_attention_mask)
+                encoder_attention_mask
+            )
         else:
             encoder_extended_attention_mask = None
 
@@ -215,11 +235,13 @@ class MAG_BertModel(BertPreTrainedModel):
         # attention_probs has shape bsz x n_heads x N x N
         # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(
-            head_mask, self.config.num_hidden_layers)
+        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
 
         embedding_output = self.embeddings(
-            input_ids=input_ids, position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
+            input_ids=input_ids,
+            position_ids=position_ids,
+            token_type_ids=token_type_ids,
+            inputs_embeds=inputs_embeds,
         )
 
         # Early fusion with MAG
@@ -262,7 +284,9 @@ class MAG_BertForSequenceClassification(BertPreTrainedModel):
 
     def forward(
         self,
-        input_ids=None,
+        input_ids,
+        visual,
+        acoustic,
         attention_mask=None,
         token_type_ids=None,
         position_ids=None,
@@ -280,7 +304,9 @@ class MAG_BertForSequenceClassification(BertPreTrainedModel):
             If :obj:`config.num_labels == 1` a regression loss is computed (Mean-Square loss),
             If :obj:`config.num_labels > 1` a classification loss is computed (Cross-Entropy).
         """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
 
         outputs = self.multimodal_bert(
             input_ids,
@@ -309,13 +335,16 @@ class MAG_BertForSequenceClassification(BertPreTrainedModel):
                 loss = loss_fct(logits.view(-1), labels.view(-1))
             else:
                 loss_fct = CrossEntropyLoss()
-                loss = loss_fct(
-                    logits.view(-1, self.num_labels), labels.view(-1))
+                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
 
         if not return_dict:
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
 
         return SequenceClassifierOutput(
-            loss=loss, logits=logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions,
+            loss=loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
         )
+
