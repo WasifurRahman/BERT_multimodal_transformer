@@ -8,6 +8,7 @@ import random
 import pickle
 import sys
 import numpy as np
+from typing import *
 
 from sklearn.metrics import classification_report
 from sklearn.metrics import confusion_matrix
@@ -59,13 +60,29 @@ class InputFeatures(object):
         self.label_id = label_id
 
 
-def get_inversion(tokens, SPIECE_MARKER="▁"):
+def get_inversion(tokens: List[str], SPIECE_MARKER="▁"):
+    """
+    Compute inversion indexes for list of tokens.
+
+    Example:
+        tokens = ["▁here", "▁is", "▁the", "▁sentence", "▁I", "▁want", "▁em", "bed", "ding", "s", "for"]
+        inversions = get_inversion(tokens)
+        inversions == [0, 1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 8]
+
+    Args:
+        tokens (List[str]): List of word tokens 
+        SPIECE_MARKER (str, optional): Special character to beginning of a single "word". Defaults to "▁".
+
+    Returns:
+        List[int]: Inversion indexes for each token
+    """
     inversion_index = -1
     inversions = []
     for token in tokens:
         if SPIECE_MARKER in token:
             inversion_index += 1
         inversions.append(inversion_index)
+    
     return inversions
 
 
