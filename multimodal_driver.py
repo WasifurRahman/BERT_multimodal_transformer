@@ -86,9 +86,7 @@ def get_inversion(tokens: List[str], SPIECE_MARKER="▁"):
     return inversions
 
 
-def convert_to_features(examples, label_list, max_seq_length, tokenizer):
-
-    label_map = {label: i for i, label in enumerate(label_list)}
+def convert_to_features(examples, max_seq_length, tokenizer):
     with open(os.path.join(args.dataset, "word2id.pickle"), "rb") as handle:
         word_2_id = pickle.load(handle)
     id_2_word = {id_: word for (word, id_) in word_2_id.items()}
@@ -183,7 +181,7 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
 
 def get_appropriate_dataset(data, tokenizer):
     features = convert_to_features(
-        data, args.label_list, args.max_seq_length, tokenizer
+        data, args.max_seq_length, tokenizer
     )
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
