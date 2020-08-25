@@ -29,10 +29,22 @@ from modeling_bert import MAG_BertForSequenceClassification
 logger = logging.getLogger(__name__)
 from global_configs import ACOUSTIC_DIM, VISUAL_DIM, DEVICE
 
-paser = argparse.ArgumentParser()
-paser.add_argument("--dataset", type=str, choices=["mosi", "mosei"], default="mosi")
+parser = argparse.ArgumentParser()
+parser.add_argument("--dataset", type=str, choices=["mosi", "mosei"], default="mosi")
+parser.add_argument("--max_seq_length", type=int, default=50)
+parser.add_argument("--train_batch_size", type=int, default=48)
+parser.add_argument("--dev_batch_size", type=int, default=128)
+parser.add_argument("--test_batch_size", type=int, default=128)
+parser.add_argument("--n_epochs", type=int, default=40)
+parser.add_argument("--beta_shift", type=float, default=1.0)
+parser.add_argument("--bert_model", type=str, default="bert-base-uncased")
+parser.add_argument("--learning_rate", type=float, default=1e-5)
+parser.add_argument("--gradient_accumulation_step", type=int, default=1)
+parser.add_argument("--warmup_proportion", type=float, default=0.1)
+parser.add_argument("--seed", type=int, default=-1)
 
-args = paser.parse_args()
+
+args = parser.parse_args()
 
 
 class InputFeatures(object):
@@ -40,8 +52,8 @@ class InputFeatures(object):
 
     def __init__(self, input_ids, visual, acoustic, input_mask, segment_ids, label_id):
         self.input_ids = input_ids
-        self.visual = (visual,)
-        self.acoustic = (acoustic,)
+        self.visual = visual
+        self.acoustic = acoustic
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.label_id = label_id
@@ -57,7 +69,7 @@ def get_inversion(tokens, SPIECE_MARKER="▁"):
     return inversions
 
 
-def convert_to_features(examples, label_list, max_seq_length, tokenizer, output_mode):
+def convert_to_features(examples, label_list, max_seq_length, tokenizer):
 
     label_map = {label: i for i, label in enumerate(label_list)}
     with open(os.path.join(args.dataset, "word2id.pickle"), "rb") as handle:
@@ -152,9 +164,9 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
             tokens_b.pop()
 
 
-def get_appropriate_dataset(data, tokenizer, output_mode):
+def get_appropriate_dataset(data, tokenizer):
     features = convert_to_features(
-        data, args.label_list, args.max_seq_length, tokenizer, output_mode
+        data, args.label_list, args.max_seq_length, tokenizer
     )
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
@@ -183,38 +195,28 @@ def set_up_data_loader():
     test_data = all_data["test"]
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model)
-    output_mode = args.output_mode
 
-    train_dataset = get_appropriate_dataset(train_data, tokenizer, output_mode)
-    dev_dataset = get_appropriate_dataset(dev_data, tokenizer, output_mode)
-    test_dataset = get_appropriate_dataset(test_data, tokenizer, output_mode)
+    train_dataset = get_appropriate_dataset(train_data, tokenizer)
+    dev_dataset = get_appropriate_dataset(dev_data, tokenizer)
+    test_dataset = get_appropriate_dataset(test_data, tokenizer)
 
     num_train_optimization_steps = (
         int(
             len(train_dataset) / args.train_batch_size / args.gradient_accumulation_step
         )
-        * args.num_train_epoch
+        * args.n_epochs
     )
 
     train_dataloader = DataLoader(
-        train_dataset,
-        batch_size=args.train_batch_size,
-        shuffle=args.shuffle,
-        num_workers=1,
+        train_dataset, batch_size=args.train_batch_size, shuffle=True
     )
 
     dev_dataloader = DataLoader(
-        dev_dataset,
-        batch_size=args.dev_batch_size,
-        shuffle=args.shuffle,
-        num_workers=1,
+        dev_dataset, batch_size=args.dev_batch_size, shuffle=True
     )
 
     test_dataloader = DataLoader(
-        test_dataset,
-        batch_size=args.test_batch_size,
-        shuffle=args.shuffle,
-        num_workers=1,
+        test_dataset, batch_size=args.test_batch_size, shuffle=True,
     )
 
     return (
@@ -226,6 +228,16 @@ def set_up_data_loader():
 
 
 def set_random_seed(seed):
+    """
+    Helper function to seed experiment for reproducibility.
+    If -1 is provided as seed, experiment uses random seed from 0~9999
+
+    Args:
+        seed (int): integer to be used as seed, use -1 to randomly seed experiment
+    """
+    if seed == -1:
+        seed = random.randint(0, 9999)
+
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.enabled = False
     torch.backends.cudnn.deterministic = True
@@ -238,13 +250,10 @@ def set_random_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def prep_for_training(num_train_optimization_steps, args):
+def prep_for_training(num_train_optimization_steps):
     tokenizer = BertTokenizer.from_pretrained(args.bert_model)
     model = MAG_BertForSequenceClassification.from_pretrained(
-        args.bert_model,
-        cache_dir=args.cache_dir,
-        num_labels=args.num_labels,
-        multimodal_config=args,
+        args.bert_model, num_labels=1, multimodal_config=args,
     )
 
     model.to(DEVICE)
@@ -383,16 +392,6 @@ def test_epoch(model, data_loader):
     return preds, labels
 
 
-def multiclass_acc(preds, truths):
-    """
-    Compute the multiclass accuracy w.r.t. groundtruth
-    :param preds: Float array representing the predictions, dimension (N,)
-    :param truths: Float/int array representing the groundtruth classes, dimension (N,)
-    :return: Classification accuracy
-    """
-    return np.sum(np.round(preds) == np.round(truths)) / float(len(truths))
-
-
 def test_score_model(model, test_data_loader, use_zero=False):
 
     preds, y_test = test_epoch(model, test_data_loader)
@@ -421,7 +420,7 @@ def train(
     optimizer,
     scheduler,
 ):
-    for epoch_i in range(int(args.num_train_epoch)):
+    for epoch_i in range(int(args.n_epochs)):
         train_loss = train_epoch(model, train_dataloader, optimizer, scheduler)
         valid_loss = eval_epoch(model, validation_dataloader, optimizer)
 

@@ -23,7 +23,6 @@ from transformers.file_utils import (
 )
 
 from transformers.modeling_bert import BertEmbeddings, BertEncoder, BertPooler
-
 from transformers.modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPooling,
