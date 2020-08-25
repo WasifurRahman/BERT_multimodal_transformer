@@ -92,7 +92,7 @@ BertLayerNorm = torch.nn.LayerNorm
 
 
 class MAG(nn.Module):
-    def __init__(self, config, multimodal_config):
+    def __init__(self, config, beta_shift):
         super(MAG, self).__init__()
 
         self.W_hv = nn.Linear(VISUAL_DIM + TEXT_DIM, TEXT_DIM)
@@ -100,7 +100,7 @@ class MAG(nn.Module):
 
         self.W_v = nn.Linear(VISUAL_DIM, TEXT_DIM)
         self.W_a = nn.Linear(ACOUSTIC_DIM, TEXT_DIM)
-        self.beta = multimodal_config["beta_shift"]
+        self.beta_shift = beta_shift
 
         self.LayerNorm = nn.LayerNorm(config.hidden_size)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
@@ -118,7 +118,7 @@ class MAG(nn.Module):
         hm_norm_ones = torch.ones(hm_norm.shape, requires_grad=True).to(DEVICE)
         hm_norm = torch.where(hm_norm == 0, hm_norm_ones, hm_norm)
 
-        thresh_hold = (em_norm / (hm_norm + eps)) * self.beta
+        thresh_hold = (em_norm / (hm_norm + eps)) * self.beta_shift
 
         ones = torch.ones(thresh_hold.shape, requires_grad=True).to(DEVICE)
 
@@ -135,14 +135,14 @@ class MAG(nn.Module):
 
 
 class MAG_BertModel(BertPreTrainedModel):
-    def __init__(self, config, multimodal_config):
+    def __init__(self, config, beta_shift):
         super().__init__(config)
         self.config = config
 
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)
-        self.MAG = MAG(config, multimodal_config)
+        self.MAG = MAG(config, beta_shift)
 
         self.init_weights()
 

@@ -16,6 +16,7 @@ from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import accuracy_score, f1_score
 
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
@@ -82,7 +83,7 @@ def get_inversion(tokens: List[str], SPIECE_MARKER="▁"):
         if SPIECE_MARKER in token:
             inversion_index += 1
         inversions.append(inversion_index)
-    
+
     return inversions
 
 
@@ -95,9 +96,9 @@ def convert_to_features(examples, max_seq_length, tokenizer):
     for (ex_index, example) in enumerate(examples):
 
         (words, visual, acoustic), label, segment = example
-        words = " ".join([id_2_word[w] for w in words])
+        sentence = " ".join([id_2_word[w] for w in words])
 
-        tokens = tokenizer.tokenize(words)
+        tokens = tokenizer.tokenize(sentence)
         inversions = get_inversion(tokens)
 
         new_visual = []
@@ -110,11 +111,18 @@ def convert_to_features(examples, max_seq_length, tokenizer):
         visual = np.array(new_visual)
         acoustic = np.array(new_audio)
 
+        # Truncate input if necessary
+        if len(tokens) > max_seq_length - 2:
+            tokens = tokens[: max_seq_length - 2]
+            acoustic = acoustic[: max_seq_length - 2]
+            visual = visual[: max_seq_length - 2]
+
+        # Append [CLS] [SEP] tokens
         tokens = ["[CLS]"] + tokens + ["[SEP]"]
 
+        # Pad zero vectors for acoustic / visual vectors to account for [CLS] / [SEP] tokens
         acoustic_zero = np.zeros((1, ACOUSTIC_DIM))
         acoustic = np.concatenate((acoustic_zero, acoustic, acoustic_zero))
-
         visual_zero = np.zeros((1, VISUAL_DIM))
         visual = np.concatenate((visual_zero, visual, visual_zero))
 
@@ -122,6 +130,7 @@ def convert_to_features(examples, max_seq_length, tokenizer):
         segment_ids = [0] * len(input_ids)
         input_mask = [1] * len(input_ids)
 
+        # Pad acoustic / visual vectors up to maximum sequence
         acoustic_padding = np.zeros(
             (args.max_seq_length - len(input_ids), acoustic.shape[1])
         )
@@ -134,10 +143,12 @@ def convert_to_features(examples, max_seq_length, tokenizer):
 
         padding = [0] * (args.max_seq_length - len(input_ids))
 
+        # Pad inputs
         input_ids += padding
         input_mask += padding
         segment_ids += padding
 
+        # Check input length
         assert len(input_ids) == args.max_seq_length
         assert len(input_mask) == args.max_seq_length
         assert len(segment_ids) == args.max_seq_length
@@ -145,8 +156,6 @@ def convert_to_features(examples, max_seq_length, tokenizer):
         assert visual.shape[0] == args.max_seq_length
 
         label_id = float(example.label)
-
-        placeholder_sentiment = {"punchline": {"distribution": np.zeros(64)}}
 
         features.append(
             InputFeatures(
@@ -156,33 +165,13 @@ def convert_to_features(examples, max_seq_length, tokenizer):
                 visual=visual,
                 acoustic=acoustic,
                 label_id=label_id,
-                sentiment=placeholder_sentiment,
             )
         )
     return features
 
 
-def _truncate_seq_pair(tokens_a, tokens_b, max_length):
-    """Truncates a sequence pair in place to the maximum length."""
-
-    # This is a simple heuristic which will always truncate the longer sequence
-    # one token at a time. This makes more sense than truncating an equal percent
-    # of tokens from each, since if one sequence is very short then each token
-    # that's truncated likely contains more information than a longer sequence.
-    while True:
-        total_length = len(tokens_a) + len(tokens_b)
-        if total_length <= max_length:
-            break
-        if len(tokens_a) > len(tokens_b):
-            tokens_a.pop()
-        else:
-            tokens_b.pop()
-
-
 def get_appropriate_dataset(data, tokenizer):
-    features = convert_to_features(
-        data, args.max_seq_length, tokenizer
-    )
+    features = convert_to_features(data, args.max_seq_length, tokenizer)
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
     all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
@@ -242,7 +231,7 @@ def set_up_data_loader():
     )
 
 
-def set_random_seed(seed):
+def set_random_seed(seed: int):
     """
     Helper function to seed experiment for reproducibility.
     If -1 is provided as seed, experiment uses random seed from 0~9999
@@ -265,10 +254,10 @@ def set_random_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def prep_for_training(num_train_optimization_steps):
+def prep_for_training(num_train_optimization_steps: int):
     tokenizer = BertTokenizer.from_pretrained(args.bert_model)
     model = MAG_BertForSequenceClassification.from_pretrained(
-        args.bert_model, num_labels=1, multimodal_config=args,
+        args.bert_model, num_labels=1, beta_shift=args.beta_shift,
     )
 
     model.to(DEVICE)
@@ -300,7 +289,7 @@ def prep_for_training(num_train_optimization_steps):
     return model, optimizer, scheduler, tokenizer
 
 
-def train_epoch(model, train_dataloader, optimizer, scheduler):
+def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, scheduler):
     model.train()
     tr_loss = 0
     nb_tr_examples, nb_tr_steps = 0, 0
@@ -338,7 +327,7 @@ def train_epoch(model, train_dataloader, optimizer, scheduler):
     return tr_loss
 
 
-def eval_epoch(model, dev_dataloader, optimizer):
+def eval_epoch(model: nn.Module, dev_dataloader: DataLoader, optimizer):
     model.eval()
     dev_loss = 0
     nb_dev_examples, nb_dev_steps = 0, 0
@@ -372,13 +361,13 @@ def eval_epoch(model, dev_dataloader, optimizer):
     return dev_loss
 
 
-def test_epoch(model, data_loader):
+def test_epoch(model: nn.Module, test_dataloader: DataLoader):
     model.eval()
     preds = []
     labels = []
 
     with torch.no_grad():
-        for batch in tqdm(data_loader):
+        for batch in tqdm(test_dataloader):
             batch = tuple(t.to(DEVICE) for t in batch)
 
             input_ids, visual, acoustic, input_mask, segment_ids, label_ids = batch
@@ -407,9 +396,9 @@ def test_epoch(model, data_loader):
     return preds, labels
 
 
-def test_score_model(model, test_data_loader, use_zero=False):
+def test_score_model(model: nn.Module, test_dataloader: DataLoader, use_zero=False):
 
-    preds, y_test = test_epoch(model, test_data_loader)
+    preds, y_test = test_epoch(model, test_dataloader)
     non_zeros = np.array([i for i, e in enumerate(y_test) if e != 0 or use_zero])
 
     preds = preds[non_zeros]
