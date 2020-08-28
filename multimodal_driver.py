@@ -21,11 +21,11 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Tenso
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
-from torch.nn import CrossEntropyLoss, L1Loss
+from torch.nn import CrossEntropyLoss, L1Loss, MSELoss
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef
-from transformers import BertTokenizer
-from transformers.optimization import AdamW, WarmupLinearSchedule
+from transformers import BertTokenizer, get_linear_schedule_with_warmup
+from transformers.optimization import AdamW
 from modeling_bert import MAG_BertForSequenceClassification
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,10 @@ parser.add_argument("--seed", type=int, default=-1)
 
 
 args = parser.parse_args()
+
+
+def return_unk():
+    return 0
 
 
 class InputFeatures(object):
@@ -71,7 +75,7 @@ def get_inversion(tokens: List[str], SPIECE_MARKER="▁"):
         inversions == [0, 1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 8]
 
     Args:
-        tokens (List[str]): List of word tokens 
+        tokens (List[str]): List of word tokens
         SPIECE_MARKER (str, optional): Special character to beginning of a single "word". Defaults to "▁".
 
     Returns:
@@ -88,15 +92,16 @@ def get_inversion(tokens: List[str], SPIECE_MARKER="▁"):
 
 
 def convert_to_features(examples, max_seq_length, tokenizer):
-    with open(os.path.join(args.dataset, "word2id.pickle"), "rb") as handle:
-        word_2_id = pickle.load(handle)
-    id_2_word = {id_: word for (word, id_) in word_2_id.items()}
+    with open(os.path.join("datasets", args.dataset, "word2id.pickle"), "rb") as handle:
+        word_to_id = pickle.load(handle)
+    id_to_word = {id_: word for (word, id_) in word_to_id.items()}
 
     features = []
+
     for (ex_index, example) in enumerate(examples):
 
-        (words, visual, acoustic), label, segment = example
-        sentence = " ".join([id_2_word[w] for w in words])
+        (word_ids, visual, acoustic), label_id, segment = example
+        sentence = " ".join([id_to_word[id] for id in word_ids])
 
         tokens = tokenizer.tokenize(sentence)
         inversions = get_inversion(tokens)
@@ -155,8 +160,6 @@ def convert_to_features(examples, max_seq_length, tokenizer):
         assert acoustic.shape[0] == args.max_seq_length
         assert visual.shape[0] == args.max_seq_length
 
-        label_id = float(example.label)
-
         features.append(
             InputFeatures(
                 input_ids=input_ids,
@@ -170,7 +173,8 @@ def convert_to_features(examples, max_seq_length, tokenizer):
     return features
 
 
-def get_appropriate_dataset(data, tokenizer):
+def get_appropriate_dataset(data):
+    tokenizer = BertTokenizer.from_pretrained(args.bert_model)
     features = convert_to_features(data, args.max_seq_length, tokenizer)
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
@@ -191,18 +195,18 @@ def get_appropriate_dataset(data, tokenizer):
 
 
 def set_up_data_loader():
-    with open(os.path.join(args.dataset, "all_mod_data.pickle"), "rb") as handle:
+    with open(
+        os.path.join("datasets", args.dataset, "all_mod_data.pickle"), "rb"
+    ) as handle:
         all_data = pickle.load(handle)
 
     train_data = all_data["train"]
     dev_data = all_data["dev"]
     test_data = all_data["test"]
 
-    tokenizer = BertTokenizer.from_pretrained(args.bert_model)
-
-    train_dataset = get_appropriate_dataset(train_data, tokenizer)
-    dev_dataset = get_appropriate_dataset(dev_data, tokenizer)
-    test_dataset = get_appropriate_dataset(test_data, tokenizer)
+    train_dataset = get_appropriate_dataset(train_data)
+    dev_dataset = get_appropriate_dataset(dev_data)
+    test_dataset = get_appropriate_dataset(test_data)
 
     num_train_optimization_steps = (
         int(
@@ -255,7 +259,6 @@ def set_random_seed(seed: int):
 
 
 def prep_for_training(num_train_optimization_steps: int):
-    tokenizer = BertTokenizer.from_pretrained(args.bert_model)
     model = MAG_BertForSequenceClassification.from_pretrained(
         args.bert_model, num_labels=1, beta_shift=args.beta_shift,
     )
@@ -281,12 +284,12 @@ def prep_for_training(num_train_optimization_steps: int):
     ]
 
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
-    scheduler = WarmupLinearSchedule(
+    scheduler = get_linear_schedule_with_warmup(
         optimizer,
-        t_total=num_train_optimization_steps,
-        warmup_steps=args.warmup_proportion * num_train_optimization_steps,
+        num_warmup_steps=num_train_optimization_steps,
+        num_training_steps=args.warmup_proportion * num_train_optimization_steps,
     )
-    return model, optimizer, scheduler, tokenizer
+    return model, optimizer, scheduler
 
 
 def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, scheduler):
@@ -307,7 +310,7 @@ def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, sched
             labels=None,
         )
         logits = outputs[0]
-        loss_fct = L1Loss()
+        loss_fct = MSELoss()
         loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
         if args.gradient_accumulation_step > 1:
@@ -316,7 +319,6 @@ def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, sched
         loss.backward()
 
         tr_loss += loss.item()
-        nb_tr_examples += input_ids.size(0)
         nb_tr_steps += 1
 
         if (step + 1) % args.gradient_accumulation_step == 0:
@@ -324,7 +326,7 @@ def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, sched
             scheduler.step()
             optimizer.zero_grad()
 
-    return tr_loss
+    return tr_loss / nb_tr_steps
 
 
 def eval_epoch(model: nn.Module, dev_dataloader: DataLoader, optimizer):
@@ -348,17 +350,16 @@ def eval_epoch(model: nn.Module, dev_dataloader: DataLoader, optimizer):
             )
             logits = outputs[0]
 
-            loss_fct = L1Loss()
+            loss_fct = MSELoss()
             loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
             if args.gradient_accumulation_step > 1:
                 loss = loss / args.gradient_accumulation_step
 
             dev_loss += loss.item()
-            nb_dev_examples += input_ids.size(0)
             nb_dev_steps += 1
 
-    return dev_loss
+    return dev_loss / nb_dev_steps
 
 
 def test_epoch(model: nn.Module, test_dataloader: DataLoader):
@@ -384,14 +385,17 @@ def test_epoch(model: nn.Module, test_dataloader: DataLoader):
 
             logits = outputs[0]
 
-            preds.append(logits)
-            labels.append(label_ids)
+            logits = logits.detach().cpu().numpy()
+            label_ids = label_ids.detach().cpu().numpy()
+
+            logits = np.squeeze(logits).tolist()
+            label_ids = np.squeeze(label_ids).tolist()
+
+            preds.extend(logits)
+            labels.extend(label_ids)
 
         preds = np.array(preds)
         labels = np.array(labels)
-
-        preds = np.squeeze(logits)
-        labels = np.squeeze(labels)
 
     return preds, labels
 
@@ -408,6 +412,8 @@ def test_score_model(model: nn.Module, test_dataloader: DataLoader, use_zero=Fal
     corr = np.corrcoef(preds, y_test)[0][1]
 
     preds = preds >= 0
+    y_test = y_test >= 0
+
     f_score = f1_score(y_test, preds, average="weighted")
     accuracy = accuracy_score(y_test, preds)
 
@@ -440,7 +446,6 @@ def train(
 
 
 def main():
-    print("Seed: ", args.seed)
     set_random_seed(args.seed)
 
     (
