@@ -2,7 +2,6 @@ from __future__ import absolute_import, division, print_function
 
 import argparse
 import csv
-import logging
 import os
 import random
 import pickle
@@ -15,6 +14,7 @@ from sklearn.metrics import confusion_matrix
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import accuracy_score, f1_score
 
+import wandb
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, TensorDataset
@@ -28,7 +28,7 @@ from transformers import BertTokenizer, get_linear_schedule_with_warmup
 from transformers.optimization import AdamW
 from modeling_bert import MAG_BertForSequenceClassification
 
-logger = logging.getLogger(__name__)
+from argparse_utils import str2bool, seed
 from global_configs import ACOUSTIC_DIM, VISUAL_DIM, DEVICE
 
 parser = argparse.ArgumentParser()
@@ -39,11 +39,12 @@ parser.add_argument("--dev_batch_size", type=int, default=128)
 parser.add_argument("--test_batch_size", type=int, default=128)
 parser.add_argument("--n_epochs", type=int, default=40)
 parser.add_argument("--beta_shift", type=float, default=1.0)
+parser.add_argument("--dropout_prob", type=float, default=0.5)
 parser.add_argument("--bert_model", type=str, default="bert-base-uncased")
 parser.add_argument("--learning_rate", type=float, default=1e-5)
 parser.add_argument("--gradient_accumulation_step", type=int, default=1)
 parser.add_argument("--warmup_proportion", type=float, default=0.1)
-parser.add_argument("--seed", type=int, default=-1)
+parser.add_argument("--seed", type=seed, default=-1)
 
 
 args = parser.parse_args()
@@ -63,6 +64,12 @@ class InputFeatures(object):
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.label_id = label_id
+
+
+class MultimodalConfig(object):
+    def __init__(self, beta_shift, dropout_prob):
+        self.beta_shift = beta_shift
+        self.dropout_prob = dropout_prob
 
 
 def get_inversion(tokens: List[str], SPIECE_MARKER="▁"):
@@ -259,8 +266,11 @@ def set_random_seed(seed: int):
 
 
 def prep_for_training(num_train_optimization_steps: int):
+    multimodal_config = MultimodalConfig(
+        beta_shift=args.beta_shift, dropout_prob=args.dropout_prob
+    )
     model = MAG_BertForSequenceClassification.from_pretrained(
-        args.bert_model, num_labels=1, beta_shift=args.beta_shift,
+        args.bert_model, multimodal_config=multimodal_config, num_labels=1,
     )
 
     model.to(DEVICE)
@@ -415,11 +425,9 @@ def test_score_model(model: nn.Module, test_dataloader: DataLoader, use_zero=Fal
     y_test = y_test >= 0
 
     f_score = f1_score(y_test, preds, average="weighted")
-    accuracy = accuracy_score(y_test, preds)
+    acc = accuracy_score(y_test, preds)
 
-    print("Accuracy {}".format(accuracy))
-
-    return accuracy, mae, corr, f_score
+    return acc, mae, corr, f_score
 
 
 def train(
@@ -430,22 +438,45 @@ def train(
     optimizer,
     scheduler,
 ):
+    valid_losses = []
+    test_accuracies = []
+
     for epoch_i in range(int(args.n_epochs)):
         train_loss = train_epoch(model, train_dataloader, optimizer, scheduler)
         valid_loss = eval_epoch(model, validation_dataloader, optimizer)
+        test_acc, test_mae, test_corr, test_f_score = test_score_model(
+            model, test_data_loader
+        )
 
         print(
-            "epoch:{}, train_loss:{}, valid_loss:{}".format(
-                epoch_i, train_loss, valid_loss
+            "epoch:{}, train_loss:{}, valid_loss:{}, test_acc:{}".format(
+                epoch_i, train_loss, valid_loss, test_acc
             )
         )
 
-        test_accuracy, test_mae, test_corr, test_f_score = test_score_model(
-            model, test_data_loader
+        valid_losses.append(valid_loss)
+        test_accuracies.append(test_acc)
+
+        wandb.log(
+            (
+                {
+                    "train_loss": train_loss,
+                    "valid_loss": valid_loss,
+                    "test_acc": test_acc,
+                    "test_mae": test_mae,
+                    "test_corr": test_corr,
+                    "test_f_score": test_f_score,
+                    "best_valid_loss": min(valid_losses),
+                    "best_test_acc": max(test_accuracies),
+                }
+            )
         )
 
 
 def main():
+    wandb.init(project="MAG")
+    wandb.config.update(args)
+
     set_random_seed(args.seed)
 
     (

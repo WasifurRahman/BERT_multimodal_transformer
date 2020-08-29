@@ -74,7 +74,7 @@ BertLayerNorm = torch.nn.LayerNorm
 
 
 class MAG(nn.Module):
-    def __init__(self, config, beta_shift):
+    def __init__(self, hidden_size, beta_shift, dropout_prob):
         super(MAG, self).__init__()
 
         self.W_hv = nn.Linear(VISUAL_DIM + TEXT_DIM, TEXT_DIM)
@@ -84,8 +84,8 @@ class MAG(nn.Module):
         self.W_a = nn.Linear(ACOUSTIC_DIM, TEXT_DIM)
         self.beta_shift = beta_shift
 
-        self.LayerNorm = nn.LayerNorm(config.hidden_size)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.LayerNorm = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, text_embedding, visual, acoustic):
         eps = 1e-6
@@ -117,14 +117,18 @@ class MAG(nn.Module):
 
 
 class MAG_BertModel(BertPreTrainedModel):
-    def __init__(self, config, beta_shift):
+    def __init__(self, config, multimodal_config):
         super().__init__(config)
         self.config = config
 
         self.embeddings = BertEmbeddings(config)
         self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)
-        self.MAG = MAG(config, beta_shift)
+        self.MAG = MAG(
+            config.hidden_size,
+            multimodal_config.beta_shift,
+            multimodal_config.dropout_prob,
+        )
 
         self.init_weights()
 
@@ -271,11 +275,11 @@ class MAG_BertModel(BertPreTrainedModel):
 
 
 class MAG_BertForSequenceClassification(BertPreTrainedModel):
-    def __init__(self, config, beta_shift):
+    def __init__(self, config, multimodal_config):
         super().__init__(config)
         self.num_labels = config.num_labels
 
-        self.multimodal_bert = MAG_BertModel(config, beta_shift)
+        self.multimodal_bert = MAG_BertModel(config, multimodal_config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.classifier = nn.Linear(config.hidden_size, config.num_labels)
 
