@@ -40,11 +40,16 @@ parser.add_argument("--test_batch_size", type=int, default=128)
 parser.add_argument("--n_epochs", type=int, default=40)
 parser.add_argument("--beta_shift", type=float, default=1.0)
 parser.add_argument("--dropout_prob", type=float, default=0.5)
-parser.add_argument("--bert_model", type=str, default="bert-base-uncased")
+parser.add_argument(
+    "--model",
+    type=str,
+    choices=["bert-base-uncased", "xlnet-base-uncased"],
+    default="bert-base-uncased",
+)
 parser.add_argument("--learning_rate", type=float, default=1e-5)
 parser.add_argument("--gradient_accumulation_step", type=int, default=1)
 parser.add_argument("--warmup_proportion", type=float, default=0.1)
-parser.add_argument("--seed", type=seed, default=-1)
+parser.add_argument("--seed", type=seed, default="random")
 
 
 args = parser.parse_args()
@@ -129,36 +134,14 @@ def convert_to_features(examples, max_seq_length, tokenizer):
             acoustic = acoustic[: max_seq_length - 2]
             visual = visual[: max_seq_length - 2]
 
-        # Append [CLS] [SEP] tokens
-        tokens = ["[CLS]"] + tokens + ["[SEP]"]
+        if args.model == "bert-base-uncased":
+            prepare_input = prepare_bert_input
+        elif args.model == "xlnet-base-uncased":
+            prepare_input = prepare_xlnet_input
 
-        # Pad zero vectors for acoustic / visual vectors to account for [CLS] / [SEP] tokens
-        acoustic_zero = np.zeros((1, ACOUSTIC_DIM))
-        acoustic = np.concatenate((acoustic_zero, acoustic, acoustic_zero))
-        visual_zero = np.zeros((1, VISUAL_DIM))
-        visual = np.concatenate((visual_zero, visual, visual_zero))
-
-        input_ids = tokenizer.convert_tokens_to_ids(tokens)
-        segment_ids = [0] * len(input_ids)
-        input_mask = [1] * len(input_ids)
-
-        # Pad acoustic / visual vectors up to maximum sequence
-        acoustic_padding = np.zeros(
-            (args.max_seq_length - len(input_ids), acoustic.shape[1])
+        input_ids, visual, acoustic, input_mask, segment_ids = prepare_input(
+            tokens, visual, acoustic, tokenizer
         )
-        acoustic = np.concatenate((acoustic, acoustic_padding))
-
-        visual_padding = np.zeros(
-            (args.max_seq_length - len(input_ids), visual.shape[1])
-        )
-        visual = np.concatenate((visual, visual_padding))
-
-        padding = [0] * (args.max_seq_length - len(input_ids))
-
-        # Pad inputs
-        input_ids += padding
-        input_mask += padding
-        segment_ids += padding
 
         # Check input length
         assert len(input_ids) == args.max_seq_length
@@ -178,6 +161,65 @@ def convert_to_features(examples, max_seq_length, tokenizer):
             )
         )
     return features
+
+
+def prepare_bert_input(tokens, visual, acoustic, tokenizer):
+    # Append [CLS] [SEP] tokens
+    tokens = ["[CLS]"] + tokens + ["[SEP]"]
+
+    # Pad zero vectors for acoustic / visual vectors to account for [CLS] / [SEP] tokens
+    acoustic_zero = np.zeros((1, ACOUSTIC_DIM))
+    acoustic = np.concatenate((acoustic_zero, acoustic, acoustic_zero))
+    visual_zero = np.zeros((1, VISUAL_DIM))
+    visual = np.concatenate((visual_zero, visual, visual_zero))
+
+    input_ids = tokenizer.convert_tokens_to_ids(tokens)
+    segment_ids = [0] * len(input_ids)
+    input_mask = [1] * len(input_ids)
+
+    # Pad acoustic / visual vectors up to maximum sequence
+    acoustic_padding = np.zeros((args.max_seq_length - len(input_ids), ACOUSTIC_DIM))
+    acoustic = np.concatenate((acoustic, acoustic_padding))
+
+    visual_padding = np.zeros((args.max_seq_length - len(input_ids), VISUAL_DIM))
+    visual = np.concatenate((visual, visual_padding))
+
+    padding = [0] * (args.max_seq_length - len(input_ids))
+
+    # Pad inputs
+    input_ids += padding
+    input_mask += padding
+    segment_ids += padding
+
+    return input_ids, visual, acoustic, input_mask, segment_ids
+
+
+def prepare_xlnet_input(tokens, visual, acoustic, tokenizer):
+    tokens = tokens + ["[SEP]"] + ["[CLS]"]
+    audio_zero = np.zeros((1, ACOUSTIC_DIM))
+    acoustic = np.concatenate((acoustic, audio_zero, audio_zero))
+    visual_zero = np.zeros((1, VISUAL_DIM))
+    visual = np.concatenate((visual, visual_zero, visual_zero))
+
+    segment_ids = [0] * (len(tokens) - 1) + [2]
+
+    input_ids = tokenizer.convert_tokens_to_ids(tokens)
+
+    input_mask = [1] * len(input_ids)
+    padding = [0] * (args.max_seq_length - len(input_ids))
+
+    # then zero pad the visual and acoustic
+    audio_padding = np.zeros((args.max_seq_length - len(input_ids), ACOUSTIC_DIM))
+    acoustic = np.concatenate((audio_padding, acoustic))
+
+    video_padding = np.zeros((args.max_seq_length - len(input_ids), VISUAL_DIM))
+    visual = np.concatenate((video_padding, visual))
+
+    input_ids = padding + input_ids
+    input_mask = padding + input_mask
+    segment_ids = [4] * (args.max_seq_length - len(segment_ids)) + segment_ids
+
+    return input_ids, visual, acoustic, input_mask, segment_ids
 
 
 def get_appropriate_dataset(data):
@@ -250,8 +292,7 @@ def set_random_seed(seed: int):
     Args:
         seed (int): integer to be used as seed, use -1 to randomly seed experiment
     """
-    if seed == -1:
-        seed = random.randint(0, 9999)
+    print("Seed: {}".format(seed))
 
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.enabled = False
@@ -476,7 +517,6 @@ def train(
 def main():
     wandb.init(project="MAG")
     wandb.config.update(args)
-
     set_random_seed(args.seed)
 
     (

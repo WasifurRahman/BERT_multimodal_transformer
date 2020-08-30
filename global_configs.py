@@ -8,5 +8,6 @@ DEVICE = torch.device("cuda:0")
 
 ACOUSTIC_DIM = 74
 VISUAL_DIM = 47
-
 TEXT_DIM = 768
+
+XLNET_INJECTION_INDEX = 1
