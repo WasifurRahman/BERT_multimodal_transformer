@@ -27,6 +27,7 @@ from sklearn.metrics import matthews_corrcoef
 from transformers import BertTokenizer, XLNetTokenizer, get_linear_schedule_with_warmup
 from transformers.optimization import AdamW
 from modeling_bert import MAG_BertForSequenceClassification
+from modeling_xlnet import MAG_XLNetForSequenceClassification
 
 from argparse_utils import str2bool, seed
 from global_configs import ACOUSTIC_DIM, VISUAL_DIM, DEVICE
@@ -325,9 +326,13 @@ def prep_for_training(num_train_optimization_steps: int):
     multimodal_config = MultimodalConfig(
         beta_shift=args.beta_shift, dropout_prob=args.dropout_prob
     )
-    model = MAG_BertForSequenceClassification.from_pretrained(
-        args.bert_model, multimodal_config=multimodal_config, num_labels=1,
-    )
+    
+    if args.model == "bert-base-uncased":
+        model = MAG_BertForSequenceClassification.from_pretrained(
+            args.model, multimodal_config=multimodal_config, num_labels=1,
+        )
+    elif args.model == "xlnet-base-cased":
+        model = MAG_XLNetForSequenceClassification.from_pretrained(args.model, multimodal_config=multimodal_config, num_labels=1)
 
     model.to(DEVICE)
 
