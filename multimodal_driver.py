@@ -137,7 +137,7 @@ def convert_to_features(examples, max_seq_length, tokenizer):
 
         if args.model == "bert-base-uncased":
             prepare_input = prepare_bert_input
-        elif args.model == "xlnet-base-uncased":
+        elif args.model == "xlnet-base-cased":
             prepare_input = prepare_xlnet_input
 
         input_ids, visual, acoustic, input_mask, segment_ids = prepare_input(
@@ -326,13 +326,15 @@ def prep_for_training(num_train_optimization_steps: int):
     multimodal_config = MultimodalConfig(
         beta_shift=args.beta_shift, dropout_prob=args.dropout_prob
     )
-    
+
     if args.model == "bert-base-uncased":
         model = MAG_BertForSequenceClassification.from_pretrained(
             args.model, multimodal_config=multimodal_config, num_labels=1,
         )
     elif args.model == "xlnet-base-cased":
-        model = MAG_XLNetForSequenceClassification.from_pretrained(args.model, multimodal_config=multimodal_config, num_labels=1)
+        model = MAG_XLNetForSequenceClassification.from_pretrained(
+            args.model, multimodal_config=multimodal_config, num_labels=1
+        )
 
     model.to(DEVICE)
 
