@@ -24,7 +24,7 @@ from tqdm import tqdm, trange
 from torch.nn import CrossEntropyLoss, L1Loss, MSELoss
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef
-from transformers import BertTokenizer, get_linear_schedule_with_warmup
+from transformers import BertTokenizer, XLNetTokenizer, get_linear_schedule_with_warmup
 from transformers.optimization import AdamW
 from modeling_bert import MAG_BertForSequenceClassification
 
@@ -43,7 +43,7 @@ parser.add_argument("--dropout_prob", type=float, default=0.5)
 parser.add_argument(
     "--model",
     type=str,
-    choices=["bert-base-uncased", "xlnet-base-uncased"],
+    choices=["bert-base-uncased", "xlnet-base-cased"],
     default="bert-base-uncased",
 )
 parser.add_argument("--learning_rate", type=float, default=1e-5)
@@ -222,8 +222,23 @@ def prepare_xlnet_input(tokens, visual, acoustic, tokenizer):
     return input_ids, visual, acoustic, input_mask, segment_ids
 
 
+def get_tokenizer(model):
+    if model == "bert-base-uncased":
+        return BertTokenizer.from_pretrained(model)
+    elif model == "xlnet-base-cased":
+        return XLNetTokenizer.from_pretrained(model)
+    else:
+        raise ValueError(
+            "Expected 'bert-base-uncased' or 'xlnet-base-cased, but received {}".format(
+                model
+            )
+        )
+
+
 def get_appropriate_dataset(data):
-    tokenizer = BertTokenizer.from_pretrained(args.bert_model)
+
+    tokenizer = get_tokenizer(args.model)
+
     features = convert_to_features(data, args.max_seq_length, tokenizer)
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)

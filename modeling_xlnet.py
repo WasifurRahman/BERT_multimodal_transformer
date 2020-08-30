@@ -1,13 +1,15 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn import CrossEntropyLoss, MSELoss
 
 from global_configs import *
 from modeling import MAG
-from transformers.modeling_xlnet import XLNetLayer
+from transformers.modeling_xlnet import XLNetLayer, SequenceSummary
 
 
 class MAG_XLNetModel(XLNetPreTrainedModel):
-    def __init__(self, config, multimodal_):
+    def __init__(self, config, multimodal_config):
         super().__init__(config)
 
         self.mem_len = config.mem_len
@@ -83,7 +85,7 @@ class MAG_XLNetModel(XLNetPreTrainedModel):
 
         return new_mem.detach()
 
-    def positional_embedding(pos_seq, inv_freq, bsz=None):
+    def positional_embedding(self, pos_seq, inv_freq, bsz=None):
         sinusoid_inp = torch.einsum("i,d->id", pos_seq, inv_freq)
         pos_emb = torch.cat([torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)], dim=-1)
         pos_emb = pos_emb[:, None, :]
@@ -470,7 +472,7 @@ class MAG_XLNetForSequenceClassification(XLNetPreTrainedModel):
         transformer_outputs = self.transformer(
             input_ids,
             visual,
-            acsoutic,
+            acoustic,
             attention_mask=attention_mask,
             mems=mems,
             perm_mask=perm_mask,
