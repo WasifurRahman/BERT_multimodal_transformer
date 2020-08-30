@@ -50,7 +50,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
 
     **MAG-BERT**
     ```
-    from modeling_bert import MAG_BertForSequenceClassification
+    from bert import MAG_BertForSequenceClassification
 
     class MultimodalConfig(object):
         def __init__(self, beta_shift, dropout_prob):
@@ -68,7 +68,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
 
     **MAG-XLNet**
     ```
-    from modeling_xlnet import MAG_XLNetForSequenceClassification
+    from xlnet import MAG_XLNetForSequenceClassification
 
     class MultimodalConfig(object):
         def __init__(self, beta_shift, dropout_prob):
@@ -88,5 +88,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
 
     input_ids, attention_mask, position_ids are torch.LongTensor of shape (batch_size, sequence_length). For more details on how these tensors should be formatted / generated, please refer to ```multimodal_driver.py```'s ```convert_to_features``` method and [huggingface's documentation](https://huggingface.co/transformers/preprocessing.html)
 
-
-    
+## Contacts
+- Wasifur Rahman: rahmanwasifur@gmail.com
+- Sangwu Lee: sangwulee2@gmail.com
+- Kamrul Hasan: mhasan8@cs.rochester.edu

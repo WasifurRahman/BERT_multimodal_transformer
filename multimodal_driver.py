@@ -26,8 +26,8 @@ from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef
 from transformers import BertTokenizer, XLNetTokenizer, get_linear_schedule_with_warmup
 from transformers.optimization import AdamW
-from modeling_bert import MAG_BertForSequenceClassification
-from modeling_xlnet import MAG_XLNetForSequenceClassification
+from bert import MAG_BertForSequenceClassification
+from xlnet import MAG_XLNetForSequenceClassification
 
 from argparse_utils import str2bool, seed
 from global_configs import ACOUSTIC_DIM, VISUAL_DIM, DEVICE
