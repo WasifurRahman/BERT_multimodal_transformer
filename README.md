@@ -36,7 +36,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
 
 3. Model usage
 
-    We would like to thank [huggingface](https://huggingface.co/) for providing and open-sourcing BERT / XLNet code for developing our models. Note that modeling_bert.py / modeling_xlnet.py are based on huggingface's implmentation.
+    We would like to thank [huggingface](https://huggingface.co/) for providing and open-sourcing BERT / XLNet code for developing our models. Note that bert.py / xlnet.py are based on huggingface's implmentation.
 
     **MAG**
     ```
