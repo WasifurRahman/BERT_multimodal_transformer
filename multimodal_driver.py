@@ -33,7 +33,8 @@ from argparse_utils import str2bool, seed
 from global_configs import ACOUSTIC_DIM, VISUAL_DIM, DEVICE
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, choices=["mosi", "mosei"], default="mosi")
+parser.add_argument("--dataset", type=str,
+                    choices=["mosi", "mosei"], default="mosi")
 parser.add_argument("--max_seq_length", type=int, default=50)
 parser.add_argument("--train_batch_size", type=int, default=48)
 parser.add_argument("--dev_batch_size", type=int, default=128)
@@ -83,7 +84,8 @@ def get_inversion(tokens: List[str], SPIECE_MARKER="▁"):
     Compute inversion indexes for list of tokens.
 
     Example:
-        tokens = ["▁here", "▁is", "▁the", "▁sentence", "▁I", "▁want", "▁em", "bed", "ding", "s", "for"]
+        tokens = ["▁here", "▁is", "▁the", "▁sentence",
+            "▁I", "▁want", "▁em", "bed", "ding", "s", "for"]
         inversions = get_inversion(tokens)
         inversions == [0, 1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 8]
 
@@ -165,8 +167,9 @@ def convert_to_features(examples, max_seq_length, tokenizer):
 
 
 def prepare_bert_input(tokens, visual, acoustic, tokenizer):
-    # Append [CLS] [SEP] tokens
-    tokens = ["[CLS]"] + tokens + ["[SEP]"]
+    CLS = tokenizer.cls_token
+    SEP = tokenizer.sep_token
+    tokens = [CLS] + tokens + [SEP]
 
     # Pad zero vectors for acoustic / visual vectors to account for [CLS] / [SEP] tokens
     acoustic_zero = np.zeros((1, ACOUSTIC_DIM))
@@ -178,14 +181,15 @@ def prepare_bert_input(tokens, visual, acoustic, tokenizer):
     segment_ids = [0] * len(input_ids)
     input_mask = [1] * len(input_ids)
 
-    # Pad acoustic / visual vectors up to maximum sequence
-    acoustic_padding = np.zeros((args.max_seq_length - len(input_ids), ACOUSTIC_DIM))
+    pad_length = args.max_seq_length - len(input_ids)
+
+    acoustic_padding = np.zeros((pad_length, ACOUSTIC_DIM))
     acoustic = np.concatenate((acoustic, acoustic_padding))
 
-    visual_padding = np.zeros((args.max_seq_length - len(input_ids), VISUAL_DIM))
+    visual_padding = np.zeros((pad_length, VISUAL_DIM))
     visual = np.concatenate((visual, visual_padding))
 
-    padding = [0] * (args.max_seq_length - len(input_ids))
+    padding = [0] * pad_length
 
     # Pad inputs
     input_ids += padding
@@ -196,29 +200,33 @@ def prepare_bert_input(tokens, visual, acoustic, tokenizer):
 
 
 def prepare_xlnet_input(tokens, visual, acoustic, tokenizer):
-    tokens = tokens + ["[SEP]"] + ["[CLS]"]
+    CLS = tokenizer.cls_token
+    SEP = tokenizer.sep_token
+    PAD_ID = tokenizer.pad_token_id
+
+    # PAD special tokens
+    tokens = tokens + [SEP] + [CLS]
     audio_zero = np.zeros((1, ACOUSTIC_DIM))
     acoustic = np.concatenate((acoustic, audio_zero, audio_zero))
     visual_zero = np.zeros((1, VISUAL_DIM))
     visual = np.concatenate((visual, visual_zero, visual_zero))
 
+    input_ids = tokenizer.convert_tokens_to_ids(tokens)
+    input_mask = [1] * len(input_ids)
     segment_ids = [0] * (len(tokens) - 1) + [2]
 
-    input_ids = tokenizer.convert_tokens_to_ids(tokens)
-
-    input_mask = [1] * len(input_ids)
-    padding = [0] * (args.max_seq_length - len(input_ids))
+    pad_length = (args.max_seq_length - len(segment_ids))
 
     # then zero pad the visual and acoustic
-    audio_padding = np.zeros((args.max_seq_length - len(input_ids), ACOUSTIC_DIM))
+    audio_padding = np.zeros(pad_length, ACOUSTIC_DIM)
     acoustic = np.concatenate((audio_padding, acoustic))
 
-    video_padding = np.zeros((args.max_seq_length - len(input_ids), VISUAL_DIM))
+    video_padding = np.zeros(pad_length, VISUAL_DIM)
     visual = np.concatenate((video_padding, visual))
 
-    input_ids = padding + input_ids
-    input_mask = padding + input_mask
-    segment_ids = [4] * (args.max_seq_length - len(segment_ids)) + segment_ids
+    input_ids = [PAD_ID] * pad_length + input_ids
+    input_mask = [0] * pad_length + input_mask
+    segment_ids = [3] * pad_length + segment_ids
 
     return input_ids, visual, acoustic, input_mask, segment_ids
 
@@ -241,12 +249,17 @@ def get_appropriate_dataset(data):
     tokenizer = get_tokenizer(args.model)
 
     features = convert_to_features(data, args.max_seq_length, tokenizer)
-    all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
-    all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
-    all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
+    all_input_ids = torch.tensor(
+        [f.input_ids for f in features], dtype=torch.long)
+    all_input_mask = torch.tensor(
+        [f.input_mask for f in features], dtype=torch.long)
+    all_segment_ids = torch.tensor(
+        [f.segment_ids for f in features], dtype=torch.long)
     all_visual = torch.tensor([f.visual for f in features], dtype=torch.float)
-    all_acoustic = torch.tensor([f.acoustic for f in features], dtype=torch.float)
-    all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.float)
+    all_acoustic = torch.tensor(
+        [f.acoustic for f in features], dtype=torch.float)
+    all_label_ids = torch.tensor(
+        [f.label_id for f in features], dtype=torch.float)
 
     dataset = TensorDataset(
         all_input_ids,
@@ -275,7 +288,8 @@ def set_up_data_loader():
 
     num_train_optimization_steps = (
         int(
-            len(train_dataset) / args.train_batch_size / args.gradient_accumulation_step
+            len(train_dataset) / args.train_batch_size /
+            args.gradient_accumulation_step
         )
         * args.n_epochs
     )
@@ -476,7 +490,8 @@ def test_epoch(model: nn.Module, test_dataloader: DataLoader):
 def test_score_model(model: nn.Module, test_dataloader: DataLoader, use_zero=False):
 
     preds, y_test = test_epoch(model, test_dataloader)
-    non_zeros = np.array([i for i, e in enumerate(y_test) if e != 0 or use_zero])
+    non_zeros = np.array(
+        [i for i, e in enumerate(y_test) if e != 0 or use_zero])
 
     preds = preds[non_zeros]
     y_test = y_test[non_zeros]
@@ -548,7 +563,8 @@ def main():
         num_train_optimization_steps,
     ) = set_up_data_loader()
 
-    model, optimizer, scheduler = prep_for_training(num_train_optimization_steps)
+    model, optimizer, scheduler = prep_for_training(
+        num_train_optimization_steps)
 
     train(
         model,
