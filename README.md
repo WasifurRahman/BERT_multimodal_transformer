@@ -8,7 +8,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
 
     `global_configs.py` defines global constants such as dimension of each data modality (text, acoustic, visual) and cpu/gpu settings. It also defines which layer MAG will be injected. The following are default configuration.
 
-    ```
+    ```python
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     os.environ["WANDB_PROGRAM"] = "multimodal_driver.py"
 
@@ -39,7 +39,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
     We would like to thank [huggingface](https://huggingface.co/) for providing and open-sourcing BERT / XLNet code for developing our models. Note that bert.py / xlnet.py are based on huggingface's implmentation.
 
     **MAG**
-    ```
+    ```python
     from modeling import MAG
 
     hidden_size, beta_shift, dropout_prob = 768, 1e-3, 0.5
@@ -49,7 +49,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
     ```
 
     **MAG-BERT**
-    ```
+    ```python
     from bert import MAG_BertForSequenceClassification
 
     class MultimodalConfig(object):
@@ -67,7 +67,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
     ```
 
     **MAG-XLNet**
-    ```
+    ```python
     from xlnet import MAG_XLNetForSequenceClassification
 
     class MultimodalConfig(object):
