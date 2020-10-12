@@ -164,14 +164,16 @@ class MAG_BertModel(BertPreTrainedModel):
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
         else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
+            raise ValueError(
+                "You have to specify either input_ids or inputs_embeds")
 
         device = input_ids.device if input_ids is not None else inputs_embeds.device
 
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=device)
         if token_type_ids is None:
-            token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+            token_type_ids = torch.zeros(
+                input_shape, dtype=torch.long, device=device)
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
@@ -187,9 +189,11 @@ class MAG_BertModel(BertPreTrainedModel):
                 encoder_sequence_length,
                 _,
             ) = encoder_hidden_states.size()
-            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
+            encoder_hidden_shape = (
+                encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
+                encoder_attention_mask = torch.ones(
+                    encoder_hidden_shape, device=device)
             encoder_extended_attention_mask = self.invert_attention_mask(
                 encoder_attention_mask
             )
@@ -201,7 +205,8 @@ class MAG_BertModel(BertPreTrainedModel):
         # attention_probs has shape bsz x n_heads x N x N
         # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        head_mask = self.get_head_mask(
+            head_mask, self.config.num_hidden_layers)
 
         embedding_output = self.embeddings(
             input_ids=input_ids,
@@ -228,7 +233,8 @@ class MAG_BertModel(BertPreTrainedModel):
         outputs = (sequence_output, pooled_output,) + encoder_outputs[
             1:
         ]  # add hidden_states and attentions if they are here
-        return outputs  # sequence_output, pooled_output, (hidden_states), (attentions)
+        # sequence_output, pooled_output, (hidden_states), (attentions)
+        return outputs
 
 
 class MAG_BertForSequenceClassification(BertPreTrainedModel):
@@ -236,7 +242,7 @@ class MAG_BertForSequenceClassification(BertPreTrainedModel):
         super().__init__(config)
         self.num_labels = config.num_labels
 
-        self.multimodal_bert = MAG_BertModel(config, multimodal_config)
+        self.bert = MAG_BertModel(config, multimodal_config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.classifier = nn.Linear(config.hidden_size, config.num_labels)
 
@@ -282,7 +288,7 @@ class MAG_BertForSequenceClassification(BertPreTrainedModel):
             heads.
         """
 
-        outputs = self.multimodal_bert(
+        outputs = self.bert(
             input_ids,
             visual,
             acoustic,
@@ -311,8 +317,8 @@ class MAG_BertForSequenceClassification(BertPreTrainedModel):
                 loss = loss_fct(logits.view(-1), labels.view(-1))
             else:
                 loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+                loss = loss_fct(
+                    logits.view(-1, self.num_labels), labels.view(-1))
             outputs = (loss,) + outputs
 
         return outputs
-

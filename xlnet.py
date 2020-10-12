@@ -27,7 +27,8 @@ class MAG_XLNetModel(XLNetPreTrainedModel):
 
         self.word_embedding = nn.Embedding(config.vocab_size, config.d_model)
         self.mask_emb = nn.Parameter(torch.FloatTensor(1, 1, config.d_model))
-        self.layer = nn.ModuleList([XLNetLayer(config) for _ in range(config.n_layer)])
+        self.layer = nn.ModuleList([XLNetLayer(config)
+                                    for _ in range(config.n_layer)])
         self.dropout = nn.Dropout(config.dropout)
 
         self.MAG = MAG(
@@ -83,15 +84,16 @@ class MAG_XLNetModel(XLNetPreTrainedModel):
             curr_out = curr_out[: self.reuse_len]
 
         if prev_mem is None:
-            new_mem = curr_out[-self.mem_len :]
+            new_mem = curr_out[-self.mem_len:]
         else:
-            new_mem = torch.cat([prev_mem, curr_out], dim=0)[-self.mem_len :]
+            new_mem = torch.cat([prev_mem, curr_out], dim=0)[-self.mem_len:]
 
         return new_mem.detach()
 
     def positional_embedding(self, pos_seq, inv_freq, bsz=None):
         sinusoid_inp = torch.einsum("i,d->id", pos_seq, inv_freq)
-        pos_emb = torch.cat([torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)], dim=-1)
+        pos_emb = torch.cat(
+            [torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)], dim=-1)
         pos_emb = pos_emb[:, None, :]
 
         if bsz is not None:
@@ -118,12 +120,16 @@ class MAG_XLNetModel(XLNetPreTrainedModel):
             bwd_pos_seq = torch.arange(-beg, -end, 1.0, dtype=torch.float)
 
             if self.clamp_len > 0:
-                fwd_pos_seq = fwd_pos_seq.clamp(-self.clamp_len, self.clamp_len)
-                bwd_pos_seq = bwd_pos_seq.clamp(-self.clamp_len, self.clamp_len)
+                fwd_pos_seq = fwd_pos_seq.clamp(-self.clamp_len,
+                                                self.clamp_len)
+                bwd_pos_seq = bwd_pos_seq.clamp(-self.clamp_len,
+                                                self.clamp_len)
 
             if bsz is not None:
-                fwd_pos_emb = self.positional_embedding(fwd_pos_seq, inv_freq, bsz // 2)
-                bwd_pos_emb = self.positional_embedding(bwd_pos_seq, inv_freq, bsz // 2)
+                fwd_pos_emb = self.positional_embedding(
+                    fwd_pos_seq, inv_freq, bsz // 2)
+                bwd_pos_emb = self.positional_embedding(
+                    bwd_pos_seq, inv_freq, bsz // 2)
             else:
                 fwd_pos_emb = self.positional_embedding(fwd_pos_seq, inv_freq)
                 bwd_pos_emb = self.positional_embedding(bwd_pos_seq, inv_freq)
@@ -132,7 +138,8 @@ class MAG_XLNetModel(XLNetPreTrainedModel):
         else:
             fwd_pos_seq = torch.arange(beg, end, -1.0)
             if self.clamp_len > 0:
-                fwd_pos_seq = fwd_pos_seq.clamp(-self.clamp_len, self.clamp_len)
+                fwd_pos_seq = fwd_pos_seq.clamp(-self.clamp_len,
+                                                self.clamp_len)
             pos_emb = self.positional_embedding(fwd_pos_seq, inv_freq, bsz)
 
         pos_emb = pos_emb.to(self.device)
@@ -202,7 +209,8 @@ class MAG_XLNetModel(XLNetPreTrainedModel):
             inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
             qlen, bsz = inputs_embeds.shape[0], inputs_embeds.shape[1]
         else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
+            raise ValueError(
+                "You have to specify either input_ids or inputs_embeds")
 
         visual = visual.transpose(0, 1).contiguous()
         acoustic = acoustic.transpose(0, 1).contiguous()
@@ -212,7 +220,8 @@ class MAG_XLNetModel(XLNetPreTrainedModel):
             else None
         )
         input_mask = (
-            input_mask.transpose(0, 1).contiguous() if input_mask is not None else None
+            input_mask.transpose(0, 1).contiguous(
+            ) if input_mask is not None else None
         )
         attention_mask = (
             attention_mask.transpose(0, 1).contiguous()
@@ -220,7 +229,8 @@ class MAG_XLNetModel(XLNetPreTrainedModel):
             else None
         )
         perm_mask = (
-            perm_mask.permute(1, 2, 0).contiguous() if perm_mask is not None else None
+            perm_mask.permute(1, 2, 0).contiguous(
+            ) if perm_mask is not None else None
         )
         target_mapping = (
             target_mapping.permute(1, 2, 0).contiguous()
@@ -242,7 +252,8 @@ class MAG_XLNetModel(XLNetPreTrainedModel):
         elif self.attn_type == "bi":
             attn_mask = None
         else:
-            raise ValueError("Unsupported attention type: {}".format(self.attn_type))
+            raise ValueError(
+                "Unsupported attention type: {}".format(self.attn_type))
 
         # data mask: input mask & perm mask
         assert (
@@ -263,7 +274,8 @@ class MAG_XLNetModel(XLNetPreTrainedModel):
         if data_mask is not None:
             # all mems can be attended to
             if mlen > 0:
-                mems_mask = torch.zeros([data_mask.shape[0], mlen, bsz]).to(data_mask)
+                mems_mask = torch.zeros(
+                    [data_mask.shape[0], mlen, bsz]).to(data_mask)
                 data_mask = torch.cat([mems_mask, data_mask], dim=1)
             if attn_mask is None:
                 attn_mask = data_mask[:, :, :, None]
@@ -304,7 +316,8 @@ class MAG_XLNetModel(XLNetPreTrainedModel):
         if token_type_ids is not None:
             # Convert `token_type_ids` to one-hot `seg_mat`
             if mlen > 0:
-                mem_pad = torch.zeros([mlen, bsz], dtype=torch.long, device=device)
+                mem_pad = torch.zeros(
+                    [mlen, bsz], dtype=torch.long, device=device)
                 cat_ids = torch.cat([mem_pad, token_type_ids], dim=0)
             else:
                 cat_ids = token_type_ids
@@ -327,7 +340,8 @@ class MAG_XLNetModel(XLNetPreTrainedModel):
         if head_mask is not None:
             if head_mask.dim() == 1:
                 head_mask = (
-                    head_mask.unsqueeze(0).unsqueeze(0).unsqueeze(0).unsqueeze(0)
+                    head_mask.unsqueeze(0).unsqueeze(
+                        0).unsqueeze(0).unsqueeze(0)
                 )
                 head_mask = head_mask.expand(self.n_layer, -1, -1, -1, -1)
             elif head_mask.dim() == 2:
@@ -420,7 +434,7 @@ class MAG_XLNetForSequenceClassification(XLNetPreTrainedModel):
         super().__init__(config)
         self.num_labels = config.num_labels
 
-        self.multimodal_transformer = MAG_XLNetModel(config, multimodal_config)
+        self.transformer = MAG_XLNetModel(config, multimodal_config)
         self.sequence_summary = SequenceSummary(config)
         self.logits_proj = nn.Linear(config.d_model, config.num_labels)
 
@@ -473,7 +487,7 @@ class MAG_XLNetForSequenceClassification(XLNetPreTrainedModel):
             Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
             heads.
         """
-        transformer_outputs = self.multimodal_transformer(
+        transformer_outputs = self.transformer(
             input_ids,
             visual,
             acoustic,
@@ -505,7 +519,9 @@ class MAG_XLNetForSequenceClassification(XLNetPreTrainedModel):
                 loss = loss_fct(logits.view(-1), labels.view(-1))
             else:
                 loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+                loss = loss_fct(
+                    logits.view(-1, self.num_labels), labels.view(-1))
             outputs = (loss,) + outputs
 
-        return outputs  # return (loss), logits, (mems), (hidden states), (attentions)
+        # return (loss), logits, (mems), (hidden states), (attentions)
+        return outputs
