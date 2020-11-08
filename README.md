@@ -29,10 +29,10 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
 
     **Training scripts:**
 
-    - MAG-BERT ```python mutlimodal_driver.py --model bert-base-uncased```
+    - MAG-BERT ```python multimodal_driver.py --model bert-base-uncased```
     - MAG-XLNet ```python multimodal_driver.py --model xlnet-base-cased```
 
-    By default, ```mutlimodal_driver.py``` will attempt to create a [Weights and Biases (W&B)](https://www.wandb.com/) project to log your runs and results. If you wish to disable W&B logging, set environment variable to ```WANDB_MODE=dryrun```.
+    By default, ```multimodal_driver.py``` will attempt to create a [Weights and Biases (W&B)](https://www.wandb.com/) project to log your runs and results. If you wish to disable W&B logging, set environment variable to ```WANDB_MODE=dryrun```.
 
 3. Model usage
 
@@ -57,7 +57,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
             self.beta_shift = beta_shift
             self.dropout_prob = dropout_prob
 
-    multimodal_config = MutlimodalConfig(beta_shift=1e-3, dropout_prob=0.5)
+    multimodal_config = MultimodalConfig(beta_shift=1e-3, dropout_prob=0.5)
     model = MAG_BertForSequenceClassification.from_pretrained(
             'bert-base-uncased', multimodal_config=multimodal_config, num_labels=1,
         )
@@ -75,7 +75,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
             self.beta_shift = beta_shift
             self.dropout_prob = dropout_prob
 
-    multimodal_config = MutlimodalConfig(beta_shift=1e-3, dropout_prob=0.5)
+    multimodal_config = MultimodalConfig(beta_shift=1e-3, dropout_prob=0.5)
     model = MAG_XLNet_ForSequenceClassification.from_pretrained(
             'xlnet-base-cased', multimodal_config=multimodal_config, num_labels=1,
         )
@@ -87,6 +87,63 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
     For MAG-BERT / MAG-XLNet usage, visual, acoustic are torch.FloatTensor of shape (batch_size, sequence_length, modality_dim).
 
     input_ids, attention_mask, position_ids are torch.LongTensor of shape (batch_size, sequence_length). For more details on how these tensors should be formatted / generated, please refer to ```multimodal_driver.py```'s ```convert_to_features``` method and [huggingface's documentation](https://huggingface.co/transformers/preprocessing.html)
+    
+4. Dataset Format
+
+    All datasets are saved under `./datasets/<DATASET>/` folder and is encoded as .pickle file.
+    Format of dataset is as follows:
+    ```python
+    {
+        "train": [
+            (word_ids, visual, acoustic), label_id, segment,
+            ...
+        ],
+        "dev": [ ... ],
+        "test": [ ... ]
+    }
+    ```
+    - word_ids (List[int]): List of word_ids for each word token
+    - visual (np.array): Numpy array of shape (seq_len, VISUAL_DIM)
+    - acoustic (np.array): Numpy array of shape (seq_len, ACOUSTIC_DIM)
+    - label_id (float): Label for data point
+    - segment (str): Unique ID for each data point
+    
+    Dataset is encoded as python dictionary and saved as .pickle file
+    ```python
+    import pickle
+    
+    # NOTE: Use 'wb' mode
+    with open('data.pickle', 'wb') as f:
+        pickle.dump(data, f)
+        
+    ```
+    
+    In case of MOSI, text modality is represented as list of word token ids, so `word2id.pickle` is used to convert
+    word token ids (List[int]) -> words (List[str]). 
+    
+    Here, `word2id.pickle` is a python dictionary that maps word (str) to id (int) as used in `convert_to_features`:
+    ```python
+    def convert_to_features(examples, max_seq_length, tokenizer):
+    with open(os.path.join("datasets", args.dataset, "word2id.pickle"), "rb") as handle:
+        word_to_id = pickle.load(handle)
+    id_to_word = {id_: word for (word, id_) in word_to_id.items()}
+
+    features = []
+
+    for (ex_index, example) in enumerate(examples):
+
+        (word_ids, visual, acoustic), label_id, segment = example
+        sentence = " ".join([id_to_word[id] for id in word_ids])
+
+        tokens = tokenizer.tokenize(sentence)
+        inversions = get_inversion(tokens)
+        ....
+        
+    ```
+    
+    Alternatively, feel free to change `word_ids` (List[int]) to `sentence` (str), if your multimodal dataset directly provides word / sentence instead of word ids.
+    
+    
 
 ## Contacts
 - Wasifur Rahman: rahmanwasifur@gmail.com
