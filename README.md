@@ -124,20 +124,20 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
     Here, `word2id.pickle` is a python dictionary that maps word (str) to id (int) as used in `convert_to_features`:
     ```python
     def convert_to_features(examples, max_seq_length, tokenizer):
-    with open(os.path.join("datasets", args.dataset, "word2id.pickle"), "rb") as handle:
-        word_to_id = pickle.load(handle)
-    id_to_word = {id_: word for (word, id_) in word_to_id.items()}
+        with open(os.path.join("datasets", args.dataset, "word2id.pickle"), "rb") as handle:
+            word_to_id = pickle.load(handle)
+        id_to_word = {id_: word for (word, id_) in word_to_id.items()}
 
-    features = []
+        features = []
 
-    for (ex_index, example) in enumerate(examples):
+        for (ex_index, example) in enumerate(examples):
 
-        (word_ids, visual, acoustic), label_id, segment = example
-        sentence = " ".join([id_to_word[id] for id in word_ids])
+            (word_ids, visual, acoustic), label_id, segment = example
+            sentence = " ".join([id_to_word[id] for id in word_ids])
 
-        tokens = tokenizer.tokenize(sentence)
-        inversions = get_inversion(tokens)
-        ....
+            tokens = tokenizer.tokenize(sentence)
+            inversions = get_inversion(tokens)
+            ....
         
     ```
     
