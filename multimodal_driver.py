@@ -79,57 +79,31 @@ class MultimodalConfig(object):
         self.dropout_prob = dropout_prob
 
 
-def get_inversion(tokens: List[str], SPIECE_MARKER="▁"):
-    """
-    Compute inversion indexes for list of tokens.
-
-    Example:
-        tokens = ["▁here", "▁is", "▁the", "▁sentence",
-            "▁I", "▁want", "▁em", "bed", "ding", "s", "for"]
-        inversions = get_inversion(tokens)
-        inversions == [0, 1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 8]
-
-    Args:
-        tokens (List[str]): List of word tokens
-        SPIECE_MARKER (str, optional): Special character to beginning of a single "word". Defaults to "▁".
-
-    Returns:
-        List[int]: Inversion indexes for each token
-    """
-    inversion_index = -1
-    inversions = []
-    for token in tokens:
-        if SPIECE_MARKER in token:
-            inversion_index += 1
-        inversions.append(inversion_index)
-
-    return inversions
-
-
 def convert_to_features(examples, max_seq_length, tokenizer):
-    with open(os.path.join("datasets", args.dataset, "word2id.pickle"), "rb") as handle:
-        word_to_id = pickle.load(handle)
-    id_to_word = {id_: word for (word, id_) in word_to_id.items()}
-
     features = []
 
     for (ex_index, example) in enumerate(examples):
 
-        (word_ids, visual, acoustic), label_id, segment = example
-        sentence = " ".join([id_to_word[id] for id in word_ids])
+        (words, visual, acoustic), label_id, segment = example
 
-        tokens = tokenizer.tokenize(sentence)
-        inversions = get_inversion(tokens)
+        tokens, inversions = [], []
+        for idx, word in enumerate(words):
+            tokenized = tokenizer.tokenize(word)
+            tokens.extend(tokenized)
+            inversions.extend([idx] * len(tokenized))
 
-        new_visual = []
-        new_audio = []
+        # Check inversion
+        assert len(tokens) == len(inversions)
 
-        for inv_id in inversions:
-            new_visual.append(visual[inv_id, :])
-            new_audio.append(acoustic[inv_id, :])
+        aligned_visual = []
+        aligned_audio = []
 
-        visual = np.array(new_visual)
-        acoustic = np.array(new_audio)
+        for inv_idx in inversions:
+            aligned_visual.append(visual[inv_idx, :])
+            aligned_audio.append(acoustic[inv_idx, :])
+
+        visual = np.array(aligned_visual)
+        acoustic = np.array(aligned_audio)
 
         # Truncate input if necessary
         if len(tokens) > max_seq_length - 2:
@@ -273,14 +247,12 @@ def get_appropriate_dataset(data):
 
 
 def set_up_data_loader():
-    with open(
-        os.path.join("datasets", args.dataset, "all_mod_data.pickle"), "rb"
-    ) as handle:
-        all_data = pickle.load(handle)
+    with open(f"datasets/{args.dataset}.pkl", "rb") as handle:
+        data = pickle.load(handle)
 
-    train_data = all_data["train"]
-    dev_data = all_data["dev"]
-    test_data = all_data["test"]
+    train_data = data["train"]
+    dev_data = data["dev"]
+    test_data = data["test"]
 
     train_dataset = get_appropriate_dataset(train_data)
     dev_dataset = get_appropriate_dataset(dev_data)
