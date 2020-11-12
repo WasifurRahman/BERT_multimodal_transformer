@@ -6,7 +6,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
 
 1. Configure `global_configs.py`
 
-   `global_configs.py` defines global constants such as dimension of each data modality (text, acoustic, visual) and cpu/gpu settings. It also defines which layer MAG will be injected. The following are default configuration.
+   `global_configs.py` defines global constants for runnning experiments. Dimensions of data modality (text, acoustic, visual), cpu/gpu settings, and MAG's injection position. Default configuration is set to **MOSI**.
 
    ```python
    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -14,11 +14,20 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
 
    DEVICE = torch.device("cuda:0")
 
-   # contextualized text embedding from pre-trained BERT / XLNet
-   TEXT_DIM = 768
-   # acoustic / visual embedding dimension from MOSI dataset
-   ACOUSTIC_DIM = 74
-   VISUAL_DIM = 47
+    # MOSI SETTING
+    ACOUSTIC_DIM = 74
+    VISUAL_DIM = 47
+    TEXT_DIM = 768
+
+    # MOSEI SETTING
+    # ACOUSTIC_DIM = 74
+    # VISUAL_DIM = 35
+    # TEXT_DIM = 768
+
+    # CUSTOM DATASET
+    # ACOUSTIC_DIM = ??
+    # VISUAL_DIM = ??
+    # TEXT_DIM = ??
 
    XLNET_INJECTION_INDEX = 1
    ```
