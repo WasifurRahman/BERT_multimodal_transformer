@@ -6,7 +6,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
 
 1. Configure `global_configs.py`
 
-   `global_configs.py` defines global constants for runnning experiments. Dimensions of data modality (text, acoustic, visual), cpu/gpu settings, and MAG's injection position. Default configuration is set to **MOSI**.
+   `global_configs.py` defines global constants for runnning experiments. Dimensions of data modality (text, acoustic, visual), cpu/gpu settings, and MAG's injection position. Default configuration is set to **MOSI**. For running experiments on **MOSEI** or on custom dataset, make sure that **ACOUSTIC_DIM** and **VISUAL_DIM** are set approperiately.
 
    ```python
    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -105,7 +105,7 @@ Open source code for ACL 2020 Paper: [Integrating Multimodal Information in Larg
 
 ## Dataset Format
 
-All datasets are saved under `./datasets/<DATASET>/` folder and is encoded as .pickle file.
+All datasets are saved under `./datasets/` folder and is encoded as .pkl file.
 Format of dataset is as follows:
 
 ```python
