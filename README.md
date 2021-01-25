@@ -119,7 +119,7 @@ Format of dataset is as follows:
 }
 ```
 
-- word_ids (List[str]): List of words
+- words (List[str]): List of words
 - visual (np.array): Numpy array of shape (sequence_len, VISUAL_DIM)
 - acoustic (np.array): Numpy array of shape (seqeunce_len, ACOUSTIC_DIM)
 - label_id (float): Label for data point
