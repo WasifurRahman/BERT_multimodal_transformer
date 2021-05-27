@@ -192,10 +192,10 @@ def prepare_xlnet_input(tokens, visual, acoustic, tokenizer):
     pad_length = (args.max_seq_length - len(segment_ids))
 
     # then zero pad the visual and acoustic
-    audio_padding = np.zeros(pad_length, ACOUSTIC_DIM)
+    audio_padding = np.zeros((pad_length, ACOUSTIC_DIM))
     acoustic = np.concatenate((audio_padding, acoustic))
 
-    video_padding = np.zeros(pad_length, VISUAL_DIM)
+    video_padding = np.zeros((pad_length, VISUAL_DIM))
     visual = np.concatenate((video_padding, visual))
 
     input_ids = [PAD_ID] * pad_length + input_ids
